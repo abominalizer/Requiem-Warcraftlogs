@@ -1,36 +1,29 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Requiem-Warcraftlogs
 
-## Getting Started
+A Wipefest-style analyzer for your guild's Warcraft Logs reports.
 
-First, run the development server:
+- **Report view**: every boss pull, grouped by boss and difficulty, with progress bars
+- **Pull view**: "what went wrong" insights, a death timeline with phases, the killing blow and last hits for each death, a per-player table (score, DPS, HPS, avoidable hits, interrupts), and damage taken by ability
+- **Progression view**: all pulls on one boss: progress chart, what kills you, avoidable damage, and a per-player execution ranking
+- **Guild search**: lists a guild's public reports
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Setup
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+1. Create an API client at https://www.warcraftlogs.com/api/clients/ (any redirect URL works).
+2. `cp .env.example .env.local` and fill in `WCL_CLIENT_ID` / `WCL_CLIENT_SECRET`.
+3. `npm install && npm run dev`, then open http://localhost:3000
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+`/report/demo` shows generated sample data and works without keys.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Teaching it your bosses
 
-## Learn More
+Edit `src/config/encounters.ts`. The encounter ID is shown on each boss page, and spell IDs (`#123456`) are shown in the
+damage-taken table. Mark spells as `avoidable` (they count against players) or `ignore` (never flagged).
+Without config, the app flags damage as *possibly avoidable* when only part of the raid takes it and some players take it more than once.
 
-To learn more about Next.js, take a look at the following resources:
+## Code map
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `src/lib/wcl.ts`: Warcraft Logs v2 GraphQL client (OAuth client credentials, caching, event pagination)
+- `src/lib/analysis.ts`: all the insight, score, and progression logic (pure functions)
+- `src/lib/demo.ts`: sample data
+- `src/app/...`: pages
