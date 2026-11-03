@@ -209,7 +209,7 @@ const FIGHT_TABLES = `query($code:String!,$f:[Int]!,$s:Float!,$e:Float!){
   reportData{ report(code:$code){
     dd: table(fightIDs:$f, dataType:DamageDone, startTime:$s, endTime:$e)
     hd: table(fightIDs:$f, dataType:Healing, startTime:$s, endTime:$e)
-    deaths: table(fightIDs:$f, dataType:Deaths, startTime:$s, endTime:$e)
+    deaths: events(fightIDs:$f, dataType:Deaths, startTime:$s, endTime:$e, limit:1000){ data }
     pd: playerDetails(fightIDs:$f, startTime:$s, endTime:$e)
   }}}`;
 
@@ -291,8 +291,13 @@ export async function fetchFightDetail(code: string, fightId: number): Promise<F
     return [...totals].map(([playerId, total]) => ({ playerId, total }));
   };
 
+  // Damage from players/pets (self-damage talents, friendly fire, trinkets) isn't a boss mechanic.
+  const isFriendly = (id: number) => {
+    const a = actors.get(id);
+    return Boolean(a && (a.type === "Player" || a.type === "Pet" || a.petOwner));
+  };
   const damageTaken: DamageEvent[] = dmgTaken
-    .filter((e) => e.type === "damage" && playerIds.has(e.targetID as number))
+    .filter((e) => e.type === "damage" && playerIds.has(e.targetID as number) && !isFriendly(e.sourceID as number))
     .map((e) => ({
       t: e.timestamp,
       targetId: e.targetID as number,
@@ -302,14 +307,13 @@ export async function fetchFightDetail(code: string, fightId: number): Promise<F
       overkill: (e.overkill as number) ?? 0,
     }));
 
-  const deaths: DeathRecord[] = tableEntries(t.deaths)
-    .filter((d) => playerIds.has(d.id))
-    .map((d) => {
-      let time: number = d.deathTime ?? d.timestamp ?? 0;
-      if (time < fight.startTime) time += fight.startTime; // some versions report fight-relative
-      const kb = d.killingBlow ?? d.ability;
-      return { playerId: d.id, t: time, killingAbilityId: kb?.guid ?? null };
-    });
+  const deaths: DeathRecord[] = ((t.deaths?.data ?? []) as RawEvent[])
+    .filter((d) => d.type === "death" && playerIds.has(d.targetID as number))
+    .map((d) => ({
+      playerId: d.targetID as number,
+      t: d.timestamp,
+      killingAbilityId: (d.killingAbilityGameID as number) || null,
+    }));
 
   const ints: InterruptEvent[] = interrupts
     .filter((e) => e.type === "interrupt")

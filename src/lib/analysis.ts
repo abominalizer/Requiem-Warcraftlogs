@@ -149,12 +149,16 @@ export function analyzeFight(d: FightDetail): FightAnalysis {
   const players: PlayerStats[] = d.players.map((p) => {
     let avoidableHits = 0;
     let avoidableDamage = 0;
+    let configuredHits = 0;
     for (const a of abilities) {
       if (!a.avoidable) continue;
+      // guesses don't count against tanks: they take a lot of targeted damage by design
+      if (a.avoidable === "heuristic" && p.role === "tank") continue;
       const pp = a.perPlayer.find((x) => x.playerId === p.id);
       if (pp) {
         avoidableHits += pp.hits;
         avoidableDamage += pp.total;
+        if (a.avoidable === "configured") configuredHits += pp.hits;
       }
     }
     const death = deathOf.get(p.id) ?? null;
@@ -165,10 +169,17 @@ export function analyzeFight(d: FightDetail): FightAnalysis {
       score -= pen;
       notes.push(`-${pen} died at ${fmtTime(death.t)}${death.first ? " (first death)" : ""}`);
     }
-    if (avoidableHits) {
-      const pen = Math.min(40, avoidableHits * 5);
+    // Hits on abilities you configured as avoidable cost 5 each; heuristic guesses only 1 each.
+    if (configuredHits) {
+      const pen = Math.min(40, configuredHits * 5);
       score -= pen;
-      notes.push(`-${pen} ${avoidableHits} avoidable hit${avoidableHits > 1 ? "s" : ""}`);
+      notes.push(`-${pen} ${configuredHits} avoidable hit${configuredHits > 1 ? "s" : ""}`);
+    }
+    const guessHits = avoidableHits - configuredHits;
+    if (guessHits) {
+      const pen = Math.min(10, guessHits);
+      score -= pen;
+      notes.push(`-${pen} ${guessHits} possibly-avoidable hit${guessHits > 1 ? "s" : ""}`);
     }
     return {
       player: p,

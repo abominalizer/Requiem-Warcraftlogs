@@ -20,4 +20,5 @@ export const ENCOUNTERS: Record<number, EncounterConfig> = {
 export const GLOBAL_IGNORE = new Set<number>([
   1, // melee
   0,
+  32409, // Shadow Word: Death backlash
 ]);
