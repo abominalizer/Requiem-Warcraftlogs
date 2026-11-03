@@ -1,26 +1,43 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+@theme {
+  --color-bg: #0d0f14;
+  --color-panel: #151922;
+  --color-panel-2: #1c2130;
+  --color-line: #2a3142;
+  --color-muted: #8b93a7;
+  --color-fg: #e6e9f0;
+  --color-accent: #f5a524;
+  --color-good: #3ccf7e;
+  --color-bad: #f2545b;
+  --color-warn: #f5a524;
+  --color-info: #5aa9ff;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-fg);
+}
+
+.panel {
+  @apply rounded-xl border border-line bg-panel;
+}
+.h2 {
+  @apply mb-3 text-sm font-semibold tracking-wide text-muted uppercase;
+}
+table.data {
+  @apply w-full text-sm;
+}
+table.data th {
+  @apply border-b border-line px-3 py-2 text-left text-xs font-medium text-muted uppercase;
+}
+table.data td {
+  @apply border-b border-line/50 px-3 py-1.5;
+}
+table.data tr:hover td {
+  @apply bg-panel-2/60;
+}
+.num {
+  @apply text-right tabular-nums;
 }
