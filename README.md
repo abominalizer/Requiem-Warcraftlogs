@@ -27,3 +27,13 @@ Without config, the app flags damage as *possibly avoidable* when only part of t
 - `src/lib/analysis.ts`: all the insight, score, and progression logic (pure functions)
 - `src/lib/demo.ts`: sample data
 - `src/app/...`: pages
+
+## Deploying to Cloudflare
+
+The repo is set up for Cloudflare Workers through the OpenNext adapter (`wrangler.jsonc`, `open-next.config.ts`).
+
+1. In Cloudflare, connect the GitHub repo. Build command: `npm run build`. Deploy command: `npx wrangler deploy`.
+2. Under the Worker's **Settings → Variables and Secrets**, add `WCL_CLIENT_ID` and `WCL_CLIENT_SECRET` (as secrets).
+3. If you rename the Worker, change `name` in `wrangler.jsonc` to match.
+
+To test locally in the Workers runtime: put the keys in `.dev.vars` and run `npm run preview`.

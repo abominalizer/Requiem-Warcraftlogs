@@ -39,7 +39,7 @@ async function getToken(): Promise<string> {
   const res = await fetch(TOKEN_URL, {
     method: "POST",
     headers: {
-      Authorization: "Basic " + Buffer.from(`${id}:${secret}`).toString("base64"),
+      Authorization: "Basic " + btoa(`${id}:${secret}`),
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: "grant_type=client_credentials",
