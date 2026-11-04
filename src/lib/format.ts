@@ -11,6 +11,11 @@ export function fmtTime(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+export function fmtHours(ms: number): string {
+  const m = Math.round(ms / 60000);
+  return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m` : `${m}m`;
+}
+
 export function fmtDate(unixMs: number): string {
   return new Date(unixMs).toLocaleString("en-GB", {
     weekday: "short",

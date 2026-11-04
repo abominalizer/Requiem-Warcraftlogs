@@ -95,3 +95,34 @@ export interface GuildReport {
   endTime: number;
   zone: string | null;
 }
+
+export interface GuildInfo {
+  id: number;
+  name: string;
+  faction: string | null;
+  server: string;
+  region: string;
+}
+
+export interface GuildFight {
+  encounterId: number;
+  name: string;
+  kill: boolean;
+  difficulty: number | null;
+  percent: number; // encounter progress remaining, 0 for kills
+}
+
+export interface GuildReportSummary {
+  code: string;
+  title: string;
+  startTime: number;
+  endTime: number;
+  zone: { id: number; name: string } | null;
+  fights: GuildFight[];
+}
+
+export interface GuildHome {
+  guild: GuildInfo;
+  reports: GuildReportSummary[];
+  zone: { id: number; name: string; encounters: { id: number; name: string }[] } | null;
+}

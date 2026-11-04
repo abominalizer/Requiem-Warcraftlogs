@@ -150,15 +150,9 @@ export function ErrorBox({ message }: { message: string }) {
       <h2 className="mb-2 font-semibold text-bad">Couldn&apos;t load data</h2>
       <p className="text-sm">{message}</p>
       <p className="mt-3 text-sm text-muted">
-        Need API keys? Create a client at{" "}
-        <a className="text-info underline" href="https://www.warcraftlogs.com/api/clients/" target="_blank" rel="noreferrer">
-          warcraftlogs.com/api/clients
-        </a>{" "}
-        and put <code>WCL_CLIENT_ID</code> / <code>WCL_CLIENT_SECRET</code> in <code>.env.local</code>. You can also try the{" "}
-        <Link className="text-info underline" href="/report/demo">
-          demo report
+        <Link className="text-info underline" href="/">
+          Back to the guild page
         </Link>
-        .
       </p>
     </div>
   );

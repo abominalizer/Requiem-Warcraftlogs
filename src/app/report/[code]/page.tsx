@@ -23,9 +23,7 @@ export default async function ReportPage({ params }: { params: Promise<{ code: s
     <div>
       <Breadcrumbs
         items={[
-          ...(report.guild
-            ? [{ label: report.guild.name, href: `/guild/${report.guild.region}/${encodeURIComponent(report.guild.server.toLowerCase().replace(/'/g, "").replace(/\s+/g, "-"))}/${encodeURIComponent(report.guild.name)}` }]
-            : []),
+          { label: report.guild?.name ?? "Home", href: "/" },
           { label: report.title },
         ]}
       />

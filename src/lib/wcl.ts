@@ -6,13 +6,15 @@ import type {
   DeathRecord,
   Fight,
   FightDetail,
-  GuildReport,
+  GuildHome,
+  GuildReportSummary,
   InterruptEvent,
   PhaseInfo,
   Player,
   ReportSummary,
   Role,
 } from "./types";
+import { GUILD_ID } from "@/config/guild";
 
 const API_URL = "https://www.warcraftlogs.com/api/v2/client";
 const TOKEN_URL = "https://www.warcraftlogs.com/oauth/token";
@@ -82,35 +84,68 @@ async function gql<T>(query: string, variables: Record<string, unknown>, ttlMs =
 
 // ---------------------------------------------------------------- guild
 
-export async function fetchGuildReports(
-  name: string,
-  server: string,
-  region: string,
-  page = 1,
-): Promise<{ reports: GuildReport[]; hasMore: boolean }> {
-  const q = `query($n:String!,$s:String!,$r:String!,$p:Int!){
-    reportData{ reports(guildName:$n, guildServerSlug:$s, guildServerRegion:$r, limit:25, page:$p){
-      has_more_pages
-      data{ code title startTime endTime zone{ name } }
-    }}}`;
+const GUILD_QUERY = `query($id:Int!){
+  guildData{ guild(id:$id){ id name faction{ name } server{ name region{ slug } } } }
+  reportData{ reports(guildID:$id, limit:25){
+    data{ code title startTime endTime zone{ id name }
+      fights(killType: Encounters){ encounterID name kill difficulty fightPercentage bossPercentage } }
+  }}}`;
+
+const ZONE_QUERY = `query($id:Int!){ worldData{ zone(id:$id){ id name encounters{ id name } } } }`;
+
+export async function fetchGuildHome(): Promise<GuildHome> {
   type R = {
+    guildData: {
+      guild: { id: number; name: string; faction: { name: string } | null; server: { name: string; region: { slug: string } } } | null;
+    };
     reportData: {
       reports: {
-        has_more_pages: boolean;
-        data: { code: string; title: string; startTime: number; endTime: number; zone: { name: string } | null }[];
+        data: {
+          code: string;
+          title: string;
+          startTime: number;
+          endTime: number;
+          zone: { id: number; name: string } | null;
+          fights: { encounterID: number; name: string; kill: boolean | null; difficulty: number | null; fightPercentage: number | null; bossPercentage: number | null }[] | null;
+        }[];
       };
     };
   };
-  const d = await gql<R>(q, { n: name, s: server, r: region, p: page }, 5 * 60_000);
+  const d = await gql<R>(GUILD_QUERY, { id: GUILD_ID }, 5 * 60_000);
+  const g = d.guildData.guild;
+  if (!g) throw new WclError(`Guild ${GUILD_ID} not found on Warcraft Logs.`);
+  const reports: GuildReportSummary[] = d.reportData.reports.data.map((r) => ({
+    code: r.code,
+    title: r.title,
+    startTime: r.startTime,
+    endTime: r.endTime,
+    zone: r.zone,
+    fights: (r.fights ?? [])
+      .filter((f) => f.encounterID > 0)
+      .map((f) => ({
+        encounterId: f.encounterID,
+        name: f.name,
+        kill: Boolean(f.kill),
+        difficulty: f.difficulty,
+        percent: f.kill ? 0 : (f.fightPercentage ?? f.bossPercentage ?? 100),
+      })),
+  }));
+
+  // Current raid = zone of the most recent report that has boss pulls.
+  const latestZone = reports.find((r) => r.zone && r.fights.length)?.zone;
+  let zone: GuildHome["zone"] = null;
+  if (latestZone) {
+    const z = await gql<{ worldData: { zone: { id: number; name: string; encounters: { id: number; name: string }[] } | null } }>(
+      ZONE_QUERY,
+      { id: latestZone.id },
+      24 * 60 * 60_000,
+    );
+    zone = z.worldData.zone;
+  }
   return {
-    hasMore: d.reportData.reports.has_more_pages,
-    reports: d.reportData.reports.data.map((r) => ({
-      code: r.code,
-      title: r.title,
-      startTime: r.startTime,
-      endTime: r.endTime,
-      zone: r.zone?.name ?? null,
-    })),
+    guild: { id: g.id, name: g.name, faction: g.faction?.name ?? null, server: g.server.name, region: g.server.region.slug },
+    reports,
+    zone,
   };
 }
 
@@ -121,7 +156,7 @@ const REPORT_QUERY = `query($code:String!){
     code title startTime endTime
     zone{ name }
     owner{ name }
-    guild{ name server{ name region{ slug } } }
+    guild{ id name server{ name region{ slug } } }
     phases{ encounterID phases{ id name isIntermission } }
     fights(killType: Encounters){
       id encounterID name kill startTime endTime difficulty size
@@ -142,7 +177,7 @@ type RawReport = {
   endTime: number;
   zone: { name: string } | null;
   owner: { name: string } | null;
-  guild: { name: string; server: { name: string; region: { slug: string } } } | null;
+  guild: { id: number; name: string; server: { name: string; region: { slug: string } } } | null;
   phases: { encounterID: number; phases: PhaseInfo[] }[] | null;
   fights: {
     id: number;
@@ -164,8 +199,10 @@ type RawReport = {
 
 async function fetchRawReport(code: string): Promise<RawReport> {
   const d = await gql<{ reportData: { report: RawReport | null } }>(REPORT_QUERY, { code }, 2 * 60_000);
-  if (!d.reportData.report) throw new WclError(`Report "${code}" not found (or it is private).`);
-  return d.reportData.report;
+  const r = d.reportData.report;
+  if (!r) throw new WclError(`Report "${code}" not found (or it is private).`);
+  if (r.guild?.id !== GUILD_ID) throw new WclError("This site only analyzes our guild's logs, and this report belongs to someone else.");
+  return r;
 }
 
 export async function fetchReport(code: string): Promise<ReportSummary> {

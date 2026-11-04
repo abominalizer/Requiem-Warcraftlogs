@@ -1,11 +1,12 @@
 # Requiem-Warcraftlogs
 
-A Wipefest-style analyzer for your guild's Warcraft Logs reports.
+A Wipefest-style analyzer for Requiem's (Tarren Mill EU) Warcraft Logs reports.
+The site only accepts reports from the guild set in `src/config/guild.ts` (or the `GUILD_ID` environment variable).
 
 - **Report view**: every boss pull, grouped by boss and difficulty, with progress bars
 - **Pull view**: "what went wrong" insights, a death timeline with phases, the killing blow and last hits for each death, a per-player table (score, DPS, HPS, avoidable hits, interrupts), and damage taken by ability
 - **Progression view**: all pulls on one boss: progress chart, what kills you, avoidable damage, and a per-player execution ranking
-- **Guild search**: lists a guild's public reports
+- **Home page**: the guild's current raid progression per boss and recent raid nights
 
 ## Setup
 

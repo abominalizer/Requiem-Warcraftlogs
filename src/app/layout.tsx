@@ -3,8 +3,8 @@ import Link from "next/link";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Raid Analyzer",
-  description: "Analyze your guild's Warcraft Logs: deaths, avoidable damage, interrupts and progression.",
+  title: "Requiem Logs",
+  description: "Requiem's raid log analysis: deaths, avoidable damage, interrupts and progression.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -14,11 +14,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <header className="border-b border-line bg-panel/80">
           <div className="mx-auto flex max-w-7xl items-center gap-6 px-4 py-3">
             <Link href="/" className="text-lg font-bold">
-              <span className="text-accent">Raid</span>Analyzer
+              <span className="text-accent">Requiem</span> Logs
             </Link>
             <nav className="flex gap-4 text-sm text-muted">
-              <Link href="/" className="hover:text-fg">Search</Link>
-              <Link href="/report/demo" className="hover:text-fg">Demo report</Link>
+              <Link href="/" className="hover:text-fg">Home</Link>
             </nav>
           </div>
         </header>
