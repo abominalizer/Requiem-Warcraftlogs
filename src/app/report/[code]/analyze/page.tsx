@@ -20,8 +20,16 @@ function Heat({ value, max, rgb, children }: { value: number; max: number; rgb: 
 
 function SpellHeader({ ability }: { ability: Ability }) {
   return (
-    <th className="num max-w-28 align-bottom !normal-case" title={`${ability.name} (#${ability.id})`}>
-      <span className="line-clamp-2 text-[11px] leading-tight">{ability.name}</span>
+    <th className="num max-w-28 align-bottom !normal-case">
+      <span className="line-clamp-2 text-[11px] leading-tight">
+        {ability.id > 1 ? (
+          <a href={`https://www.wowhead.com/spell=${ability.id}`} target="_blank" rel="noreferrer" className="hover:underline">
+            {ability.name}
+          </a>
+        ) : (
+          ability.name
+        )}
+      </span>
     </th>
   );
 }

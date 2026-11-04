@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { SpellTip } from "@/components/SpellTip";
 import { PlayerName } from "@/components/ui";
 import { abilityIconUrl, fmtNum } from "@/lib/format";
 import type { Ability, Player } from "@/lib/types";
@@ -62,7 +63,7 @@ export function DamageTakenMatrix({ spells, rows }: { spells: MatrixSpell[]; row
             <button
               key={s.ability.id}
               onClick={() => toggle(s.ability.id)}
-              title={`${on ? "Hide" : "Show"} ${s.ability.name} (${fmtNum(s.total)})`}
+              aria-label={`${on ? "Hide" : "Show"} ${s.ability.name} (${fmtNum(s.total)})`}
               className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition ${
                 on ? "border-accent/60 bg-accent/15 text-fg" : "border-line text-muted line-through opacity-60"
               }`}
@@ -71,7 +72,7 @@ export function DamageTakenMatrix({ spells, rows }: { spells: MatrixSpell[]; row
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={icon} alt="" width={14} height={14} className="rounded-sm" />
               )}
-              {s.ability.name}
+              <SpellTip id={s.ability.id}>{s.ability.name}</SpellTip>
             </button>
           );
         })}
@@ -118,9 +119,9 @@ export function DamageTakenMatrix({ spells, rows }: { spells: MatrixSpell[]; row
                       <button
                         onClick={() => setSortBy(sortBy === c.ability.id ? null : c.ability.id)}
                         className={`line-clamp-2 text-right text-[11px] leading-tight ${sortBy === c.ability.id ? "text-accent" : "hover:text-fg"}`}
-                        title={`Sort by ${c.ability.name} (#${c.ability.id})`}
+                        aria-label={`Sort by ${c.ability.name}`}
                       >
-                        {c.ability.name}
+                        <SpellTip id={c.ability.id}>{c.ability.name}</SpellTip>
                         {sortBy === c.ability.id && " ▼"}
                       </button>
                       <button

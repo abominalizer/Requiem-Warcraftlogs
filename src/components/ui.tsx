@@ -15,7 +15,7 @@ export function AbilityName({ ability }: { ability: Ability | null }) {
   if (!ability) return <span className="text-muted">Unknown</span>;
   const url = abilityIconUrl(ability.icon);
   return (
-    <span className="inline-flex items-center gap-1.5" title={`Spell ID ${ability.id}`}>
+    <span className="inline-flex items-center gap-1.5">
       {url && (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={url} alt="" width={16} height={16} className="rounded-sm" />

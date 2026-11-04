@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -25,6 +26,11 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           </div>
         </header>
         <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
+        {/* Wowhead spell tooltips on hover (links to wowhead.com/spell=… and <a data-wowhead="spell=…">) */}
+        <Script id="wowhead-config" strategy="afterInteractive">
+          {"window.whTooltips = { colorLinks: false, iconizeLinks: false, renameLinks: false };"}
+        </Script>
+        <Script src="https://wow.zamimg.com/js/tooltips.js" strategy="afterInteractive" />
         <footer className="mx-auto max-w-7xl px-4 py-8 text-xs text-muted">
           Data from the Warcraft Logs API. Not affiliated with Warcraft Logs or Blizzard Entertainment.
         </footer>
