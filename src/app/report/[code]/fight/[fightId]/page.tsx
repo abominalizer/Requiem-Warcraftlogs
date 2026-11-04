@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AbilityName, Bar, Breadcrumbs, DefensiveChips, ErrorBox, InsightList, PlayerName, Stat, Timeline } from "@/components/ui";
+import { AbilityName, Bar, Breadcrumbs, DefensiveChips, ErrorBox, LastHits, InsightList, PlayerName, Stat, Timeline } from "@/components/ui";
 import { analyzeFight, type FightAnalysis } from "@/lib/analysis";
 import { getFight, getReport } from "@/lib/data";
 import { classColor, diffName, fmtNum, fmtTime } from "@/lib/format";
@@ -66,7 +66,7 @@ export default async function FightPage({ params }: { params: Promise<{ code: st
         <Stat label="Raid HPS" value={fmtNum(a.raidHps)} />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[2fr_3fr]">
+      <div className="grid items-start gap-6 lg:grid-cols-[2fr_3fr]">
         <section className="panel p-4">
           <h2 className="h2">What went wrong</h2>
           <InsightList insights={a.insights} />
@@ -79,7 +79,11 @@ export default async function FightPage({ params }: { params: Promise<{ code: st
             phases={a.phases}
             deaths={a.deaths.map((d) => ({ t: d.t, player: d.player, label: d.ability?.name ?? "?", muted: d.inWipe }))}
           />
-          <h2 className="h2 mt-5">Deaths</h2>
+        </section>
+      </div>
+
+      <section className="panel p-4">
+          <h2 className="h2">Deaths</h2>
           {a.deaths.length === 0 ? (
             <p className="text-sm text-muted">Nobody died.</p>
           ) : (
@@ -90,15 +94,17 @@ export default async function FightPage({ params }: { params: Promise<{ code: st
                     <th>Time</th>
                     <th>Player</th>
                     <th>Killing blow</th>
-                    <th>Last hits taken · defensives at death</th>
+                    <th>Last hits taken</th>
+                    <th>Defensives at death</th>
                   </tr>
                 </thead>
                 <tbody>
                   {a.deaths.map((d, i) => (
-                    <tr key={i} className={d.inWipe ? "opacity-50" : ""}>
+                    <tr key={i} className={d.inWipe ? "opacity-75" : ""}>
                       <td className="tabular-nums">
                         {fmtTime(d.t)}
-                        {d.first && <span className="ml-1 rounded bg-bad/20 px-1 text-[10px] text-bad">FIRST</span>}
+                        {d.first && <span className="ml-1 rounded bg-bad px-1 text-[10px] font-semibold text-white">FIRST</span>}
+                        {d.inWipe && <span className="ml-1 rounded bg-panel-2 px-1 text-[10px] text-muted">WIPE</span>}
                       </td>
                       <td>
                         <PlayerName player={d.player} />
@@ -106,25 +112,18 @@ export default async function FightPage({ params }: { params: Promise<{ code: st
                       <td>
                         <AbilityName ability={d.ability} />
                       </td>
-                      <td>
-                        <div className="text-xs text-muted">
-                          {d.lastHits.map((h) => `${h.ability.name} ${fmtNum(h.amount)}`).join(" → ") || "—"}
-                        </div>
-                        {d.defensives && (
-                          <div className="mt-1">
-                            <DefensiveChips check={d.defensives} />
-                          </div>
-                        )}
+                      <td className="max-w-md">
+                        <LastHits hits={d.lastHits} />
                       </td>
+                      <td>{d.defensives ? <DefensiveChips check={d.defensives} /> : <span className="text-xs text-muted">—</span>}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              <p className="mt-2 text-xs text-muted">Greyed-out deaths happened during the wipe and aren&apos;t counted against players. <b className="text-bad">READY</b> = a defensive they used earlier tonight was off cooldown and not pressed. Long cooldowns reset each pull; cooldowns are base values.</p>
+              <p className="mt-2 text-xs text-muted">Deaths tagged WIPE happened during the wipe and aren&apos;t counted against players. <b className="text-bad">READY</b> = a defensive they used earlier tonight was off cooldown and not pressed. Long cooldowns reset each pull; cooldowns are base values.</p>
             </div>
           )}
-        </section>
-      </div>
+      </section>
 
       <section className="panel p-4">
         <h2 className="h2">Players</h2>

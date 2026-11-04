@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { abilityIconUrl, classColor, fmtTime } from "@/lib/format";
+import { abilityIconUrl, classColor, fmtNum, fmtTime } from "@/lib/format";
 import type { Ability, Player } from "@/lib/types";
 import type { Insight } from "@/lib/analysis";
 
@@ -96,6 +96,8 @@ export function Breadcrumbs({ items }: { items: { href?: string; label: string }
 }
 
 /** Horizontal fight timeline with phase bands and death markers. */
+const PHASE_TINTS = ["#5aa9ff", "#a78bfa", "#f5a524", "#3ccf7e", "#f472b6"];
+
 export function Timeline({
   duration,
   phases,
@@ -110,20 +112,30 @@ export function Timeline({
   return (
     <div>
       <div className="relative h-10 overflow-hidden rounded-md bg-panel-2">
-        {phases.map((p, i) => (
-          <div
-            key={i}
-            className="absolute top-0 h-full border-l border-line"
-            style={{ left: pct(p.start), width: pct(p.end - p.start), background: i % 2 ? "#ffffff06" : "transparent" }}
-          >
-            <span className="absolute top-0.5 left-1 truncate text-[10px] text-muted">{p.name}</span>
-          </div>
-        ))}
+        {phases.map((p, i) => {
+          const hue = PHASE_TINTS[i % PHASE_TINTS.length];
+          return (
+            <div
+              key={i}
+              className="absolute top-0 h-full border-l-2"
+              style={{ left: pct(p.start), width: pct(p.end - p.start), background: `${hue}22`, borderColor: `${hue}aa` }}
+            >
+              <span className="absolute top-0.5 left-1 truncate text-[10px] font-medium" style={{ color: hue }}>
+                {p.name}
+              </span>
+            </div>
+          );
+        })}
         {deaths.map((d, i) => (
           <div
             key={i}
-            className="absolute bottom-1 h-4 w-1.5 -translate-x-1/2 rounded-sm"
-            style={{ left: pct(d.t), background: d.muted ? "#6b7280" : "var(--color-bad)" }}
+            className="absolute bottom-1 h-4 w-2 -translate-x-1/2 rounded-sm ring-1"
+            style={{
+              left: pct(d.t),
+              background: classColor(d.player.className),
+              opacity: d.muted ? 0.45 : 1,
+              ["--tw-ring-color" as string]: d.muted ? "transparent" : "var(--color-bad)",
+            }}
             title={`${fmtTime(d.t)} ${d.player.name} — ${d.label}`}
           />
         ))}
@@ -153,6 +165,15 @@ export function ErrorBox({ message }: { message: string }) {
   );
 }
 
+function ChipIcon({ icon }: { icon?: string }) {
+  const url = abilityIconUrl(icon);
+  if (!url) return null;
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={url} alt="" width={14} height={14} className="rounded-sm" />;
+}
+
+const chip = "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5";
+
 /** What the player had at the moment of death: ready-but-unused defensives first. */
 export function DefensiveChips({ check }: { check: import("@/lib/analysis").DefensiveCheck | null }) {
   if (!check) return <span className="text-xs text-muted">—</span>;
@@ -160,46 +181,82 @@ export function DefensiveChips({ check }: { check: import("@/lib/analysis").Defe
   return (
     <div className="flex flex-wrap gap-1 text-[11px] leading-tight">
       {check.unsurvivable && (
-        <span className="rounded bg-info/15 px-1.5 py-0.5 font-semibold text-info" title="Killed by a spell marked as unsurvivable on the Raid page">
-          can&apos;t be survived
+        <span className={`${chip} border-info/60 bg-info/20 font-semibold text-info`} title="Killed by a spell marked as unsurvivable on the Raid page">
+          ☠ can&apos;t be survived
         </span>
       )}
       {check.spells
         .filter((s) => s.status !== "unknown")
         .map((s) =>
           s.status === "ready" && check.unsurvivable ? (
-            <span key={s.key} className="rounded bg-panel-2 px-1.5 py-0.5 text-muted" title="Ready, but this death couldn't be prevented">
+            <span key={s.key} className={`${chip} border-line bg-panel-2 text-muted`} title="Ready, but this death couldn't be prevented">
+              <ChipIcon icon={s.icon} />
               ready: {s.key}
             </span>
           ) : s.status === "ready" ? (
-            <span key={s.key} className="rounded bg-bad/20 px-1.5 py-0.5 font-semibold text-bad" title="Used earlier tonight, off cooldown, not pressed">
+            <span key={s.key} className={`${chip} border-bad bg-bad/85 font-semibold text-white`} title="Used earlier tonight, off cooldown, not pressed">
+              <ChipIcon icon={s.icon} />
               READY: {s.key}
             </span>
           ) : s.status === "used" ? (
-            <span key={s.key} className="rounded bg-good/15 px-1.5 py-0.5 text-good" title="Pressed shortly before dying">
-              used {s.key} {s.agoS}s before
+            <span key={s.key} className={`${chip} border-good/70 bg-good/20 text-good`} title="Pressed shortly before dying">
+              <ChipIcon icon={s.icon} />✓ {s.key} {s.agoS}s before
             </span>
           ) : (
-            <span
-              key={s.key}
-              className="rounded bg-panel-2 px-1.5 py-0.5 text-muted"
-              title={`${s.via ?? s.key} used ${s.agoS}s before dying`}
-            >
-              {s.readyInS == null ? `${s.key} already used this pull` : `${s.key} on CD (${s.readyInS}s left${s.via ? `, ${s.via}` : ""})`}
+            <span key={s.key} className={`${chip} border-warn/40 bg-warn/10 text-warn/90`} title={`${s.via ?? s.key} used ${s.agoS}s before dying`}>
+              <ChipIcon icon={s.icon} />
+              {s.readyInS == null ? `${s.key} already used this pull` : `${s.key} on CD ${s.readyInS}s${s.via ? ` (${s.via})` : ""}`}
             </span>
           ),
         )}
       {check.externals.map((x, i) => (
-        <span key={`x${i}`} className="rounded bg-info/15 px-1.5 py-0.5 text-info" title="External cast on them shortly before dying">
-          got {x.key}
-          {x.from ? ` from ${x.from.name}` : ""} {x.agoS}s before
+        <span key={`x${i}`} className={`${chip} border-info/60 bg-info/20 text-info`} title="External cast on them shortly before dying">
+          <ChipIcon icon={x.icon} />
+          {x.key}
+          {x.from ? (
+            <>
+              {" "}
+              from <span style={{ color: classColor(x.from.className) }}>{x.from.name}</span>
+            </>
+          ) : null}{" "}
+          {x.agoS}s before
         </span>
       ))}
       {unknown.length > 0 && (
-        <span className="px-0.5 py-0.5 text-muted/70" title="Never cast tonight: maybe not talented, or no healthstone/potions">
+        <span className="px-0.5 py-0.5 text-muted/70 italic" title="Never cast tonight: maybe not talented, or no healthstone/potions">
           not used tonight: {unknown.map((s) => s.key).join(", ")}
         </span>
       )}
+    </div>
+  );
+}
+
+/** Damage taken just before a death: icons + amounts, killing hit in red. */
+export function LastHits({ hits }: { hits: { ability: Ability; amount: number }[] }) {
+  if (!hits.length) return <span className="text-xs text-muted">—</span>;
+  return (
+    <div className="flex flex-wrap items-center gap-1 text-[11px] leading-tight">
+      {hits.map((h, i) => {
+        const last = i === hits.length - 1;
+        return (
+          <span key={i} className="inline-flex items-center gap-1">
+            {i > 0 && <span className="text-muted/60">›</span>}
+            <span
+              className={`inline-flex items-center gap-1 rounded-md px-1 py-0.5 ${last ? "bg-bad/20 font-semibold text-bad" : "bg-panel-2 text-fg/80"}`}
+            >
+              <ChipIcon icon={h.ability.icon} />
+              {h.ability.id > 1 ? (
+                <a href={`https://www.wowhead.com/spell=${h.ability.id}`} target="_blank" rel="noreferrer" className="hover:underline">
+                  {h.ability.name}
+                </a>
+              ) : (
+                h.ability.name
+              )}
+              <span className={last ? "" : "text-accent"}>{fmtNum(h.amount)}</span>
+            </span>
+          </span>
+        );
+      })}
     </div>
   );
 }

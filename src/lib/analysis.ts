@@ -1,4 +1,4 @@
-import { CLASS_DEFENSIVES, USED_WINDOW_S } from "@/config/defensives";
+import { CLASS_DEFENSIVES, CONSUMABLES, USED_WINDOW_S } from "@/config/defensives";
 import { ENCOUNTERS, GLOBAL_IGNORE } from "@/config/encounters";
 import { fmtNum, fmtTime } from "./format";
 import type { Ability, FightDetail, Player } from "./types";
@@ -40,9 +40,10 @@ export interface DefensiveCheck {
     readyInS?: number;
     /** what put it on cooldown, when it wasn't the spell itself (e.g. "Potion of Recklessness") */
     via?: string;
+    icon?: string;
   }[];
   /** externals cast on the player shortly before death */
-  externals: { key: string; from: Player | null; agoS: number }[];
+  externals: { key: string; from: Player | null; agoS: number; icon?: string }[];
   /** defensives they had ready but didn't press */
   readyUnused: string[];
   /** pressed nothing (no defensive in the last seconds, no external received) while something was ready */
@@ -105,6 +106,13 @@ function checkDefensives(d: FightDetail, player: Player, at: number, killingAbil
   const def = d.defensives;
   if (!def) return null;
   const known = new Set(def.known[player.id] ?? []);
+  // icon per spell name (for consumable labels, the first spell matching it)
+  const iconOf = (key: string) => {
+    const exact = Object.values(d.abilities).find((a) => a.name === key && a.icon);
+    if (exact) return exact.icon;
+    const cons = CONSUMABLES.find((c) => c.label === key);
+    return cons ? Object.values(d.abilities).find((a) => cons.match.test(a.name) && a.icon)?.icon : undefined;
+  };
   const classSpells = (CLASS_DEFENSIVES[player.className] ?? []).map((s) => s.name);
   const keys = [
     ...new Set([...classSpells.filter((k) => def.spells[k]), ...[...known].filter((k) => def.spells[k]?.kind === "consumable")]),
@@ -129,12 +137,13 @@ function checkDefensives(d: FightDetail, player: Player, at: number, killingAbil
       agoS: sinceS != null ? Math.round(sinceS) : undefined,
       readyInS: status === "cooldown" && !info.oncePerPull ? Math.round(info.cd - sinceS!) : undefined,
       via: status === "cooldown" && last && last.key !== key ? last.spell : undefined,
+      icon: iconOf(key),
     });
   }
   const byId = new Map(d.players.map((p) => [p.id, p]));
   const externals = def.casts
     .filter((c) => def.spells[c.key]?.kind === "external" && c.targetId === player.id && c.t <= at && at - c.t <= USED_WINDOW_S * 1000)
-    .map((c) => ({ key: c.key, from: byId.get(c.sourceId) ?? null, agoS: Math.round((at - c.t) / 1000) }));
+    .map((c) => ({ key: c.key, from: byId.get(c.sourceId) ?? null, agoS: Math.round((at - c.t) / 1000), icon: iconOf(c.key) }));
   const order: Record<DefensiveStatus, number> = { ready: 0, used: 1, cooldown: 2, unknown: 3 };
   spells.sort((a, b) => order[a.status] - order[b.status]);
   const readyUnused = spells.filter((s) => s.status === "ready").map((s) => s.key);
