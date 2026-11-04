@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DamageTakenMatrix } from "@/components/DamageTakenMatrix";
 import { AbilityName, Breadcrumbs, ErrorBox, PlayerName, Stat } from "@/components/ui";
 import { analyzeFight, analyzeProgression, type FightAnalysis, type ProgressionAnalysis } from "@/lib/analysis";
 import { getMultiPull, getReport, MAX_PULLS } from "@/lib/data";
@@ -98,13 +99,10 @@ export default async function AnalyzePage({
   const hasOtherDeaths = deathRows.some((r) => r.other > 0);
 
   // ---- damage taken: player x spell
-  const dmgCols = dt.abilities.slice(0, TOP_SPELLS);
   const dmgRows = dt.byPlayer
     .filter((r) => players.has(r.playerId))
     .map((r) => ({ ...r, player: players.get(r.playerId)! }))
     .sort((a, b) => b.total - a.total);
-  const colMax = new Map(dmgCols.map((c) => [c.ability.id, Math.max(1, ...dmgRows.map((r) => r.abilities[c.ability.id] ?? 0))]));
-  const maxTotal = Math.max(1, ...dmgRows.map((r) => r.total));
   const topTakers = (abilityId: number) =>
     dmgRows
       .filter((r) => r.abilities[abilityId])
@@ -225,48 +223,16 @@ export default async function AnalyzePage({
       <section className="panel p-4">
         <h2 className="h2">Damage taken by player and spell</h2>
         <p className="mb-3 text-xs text-muted">
-          Damage from enemies only, summed over the selected pulls. Cells are shaded relative to the player who took the most of that spell, so
-          outliers stand out. Tanks naturally top most columns.
+          Damage from enemies only, summed over the selected pulls. Click a spell to leave it out: totals and order update. Click a column
+          header to sort by that spell. Cells are shaded relative to the player who took the most of that spell, so outliers stand out.
         </p>
         {dmgRows.length === 0 ? (
           <p className="text-sm text-muted">No damage taken data.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="data">
-              <thead>
-                <tr>
-                  <th className="align-bottom">Player</th>
-                  <th className="align-bottom">Total</th>
-                  {dmgCols.map((c) => (
-                    <SpellHeader key={c.ability.id} ability={c.ability} />
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {dmgRows.map((r) => (
-                  <tr key={r.playerId}>
-                    <td className="whitespace-nowrap">
-                      <PlayerName player={r.player} />{" "}
-                      {r.player.role !== "dps" && <span className="text-[10px] text-muted uppercase">{r.player.role}</span>}
-                    </td>
-                    <td className="min-w-32">
-                      <div className="flex items-center gap-2">
-                        <span className="w-14 text-right tabular-nums">{fmtNum(r.total)}</span>
-                        <div className="h-2 flex-1 rounded bg-panel-2">
-                          <div className="h-2 rounded bg-accent" style={{ width: `${(r.total / maxTotal) * 100}%` }} />
-                        </div>
-                      </div>
-                    </td>
-                    {dmgCols.map((c) => (
-                      <Heat key={c.ability.id} value={r.abilities[c.ability.id] ?? 0} max={colMax.get(c.ability.id)!} rgb="245,165,36">
-                        {fmtNum(r.abilities[c.ability.id] ?? 0)}
-                      </Heat>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DamageTakenMatrix
+            spells={dt.abilities.map((a) => ({ ability: a.ability, total: a.total }))}
+            rows={dmgRows.map((r) => ({ player: r.player, abilities: r.abilities }))}
+          />
         )}
       </section>
 
