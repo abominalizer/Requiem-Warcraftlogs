@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ErrorBox } from "@/components/ui";
 import { GUILD_ID } from "@/config/guild";
-import { fmtDate, fmtHours } from "@/lib/format";
+import { fmtDate, fmtHours, progressColor } from "@/lib/format";
 import type { GuildHome, GuildReportSummary } from "@/lib/types";
 import { fetchGuildHome } from "@/lib/wcl";
 
@@ -124,7 +124,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
                           className="h-1.5 rounded"
                           style={{
                             width: `${b.killed ? 100 : b.pulls ? 100 - b.best : 0}%`,
-                            background: b.killed ? "var(--color-good)" : "var(--color-accent)",
+                            background: progressColor(b.best, b.killed),
                           }}
                         />
                       </div>
@@ -133,7 +133,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
                       {b.killed ? (
                         <span className="text-good">Killed {b.firstKill && new Date(b.firstKill).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
                       ) : b.pulls ? (
-                        <span>Best {b.best.toFixed(1)}%</span>
+                        <span>Best <span style={{ color: progressColor(b.best) }}>{b.best.toFixed(1)}%</span></span>
                       ) : (
                         <span className="text-muted">Not pulled</span>
                       )}
@@ -190,9 +190,11 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
                         {nightSummary(r).map((b) => (
                           <span
                             key={`${b.encounterId}:${b.difficulty}`}
-                            className={`rounded px-1.5 py-0.5 text-[11px] ${b.kill ? "bg-good/15 text-good" : "bg-bg text-muted"}`}
+                            className="rounded bg-bg px-1.5 py-0.5 text-[11px] text-muted"
+                            style={{ boxShadow: `inset 0 -2px 0 ${progressColor(b.best, b.kill)}` }}
                           >
-                            {diffShort(b.difficulty)} {b.name} · {b.kill ? "kill" : `${b.best.toFixed(1)}%`} ({b.pulls})
+                            {diffShort(b.difficulty)} {b.name} ·{" "}
+                            <span style={{ color: progressColor(b.best, b.kill) }}>{b.kill ? "kill" : `${b.best.toFixed(1)}%`}</span> ({b.pulls})
                           </span>
                         ))}
                       </div>

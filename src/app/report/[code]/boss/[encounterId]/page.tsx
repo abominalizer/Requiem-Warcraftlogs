@@ -2,7 +2,7 @@ import Link from "next/link";
 import { AbilityName, Breadcrumbs, ErrorBox, PlayerName, Score, Stat } from "@/components/ui";
 import { analyzeFight, analyzeProgression, type ProgressionAnalysis } from "@/lib/analysis";
 import { getFights, getReport } from "@/lib/data";
-import { diffName, fmtNum, fmtTime } from "@/lib/format";
+import { diffName, fmtNum, fmtTime, progressColor } from "@/lib/format";
 import type { ReportSummary } from "@/lib/types";
 
 export default async function BossPage({
@@ -69,8 +69,7 @@ export default async function BossPage({
                   className="w-full rounded-t group-hover:brightness-125"
                   style={{
                     height: `${Math.max(3, p.detail.fight.kill ? 100 : 100 - pct)}%`,
-                    background: p.detail.fight.kill ? "var(--color-good)" : "var(--color-accent)",
-                    opacity: p.detail.fight.kill ? 1 : 0.4 + (0.6 * (100 - pct)) / 100,
+                    background: progressColor(pct, p.detail.fight.kill),
                   }}
                 />
                 <span className="mt-1 text-center text-[10px] text-muted">{i + 1}</span>
@@ -205,7 +204,7 @@ export default async function BossPage({
                         Pull {i + 1}
                       </Link>
                     </td>
-                    <td>{p.detail.fight.kill ? <span className="text-good">Kill</span> : `${pctOf(p).toFixed(1)}%`}</td>
+                    <td className="font-semibold" style={{ color: progressColor(pctOf(p), p.detail.fight.kill) }}>{p.detail.fight.kill ? "Kill" : `${pctOf(p).toFixed(1)}%`}</td>
                     <td className="num">{fmtTime(p.durationMs)}</td>
                     <td>
                       {first ? (

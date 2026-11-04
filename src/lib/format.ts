@@ -59,3 +59,17 @@ export function parseReportInput(input: string): { code: string; fight?: number 
   const f = s.match(/fight=(\d+|last)/);
   return { code, fight: f && f[1] !== "last" ? Number(f[1]) : undefined };
 }
+
+/**
+ * Colour for a pull based on how close it got to a kill (like Warcraft Logs' wipe list).
+ * `remaining` = encounter % left (0 = kill).
+ */
+export function progressColor(remaining: number, kill = false): string {
+  if (kill) return "#e5cc80"; // gold
+  const done = 100 - remaining;
+  if (done >= 90) return "#ff8000"; // orange
+  if (done >= 75) return "#a335ee"; // purple
+  if (done >= 50) return "#0070ff"; // blue
+  if (done >= 25) return "#1eff00"; // green
+  return "#9d9d9d"; // grey
+}

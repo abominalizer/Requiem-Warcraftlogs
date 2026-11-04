@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Breadcrumbs, ErrorBox } from "@/components/ui";
 import { getReport } from "@/lib/data";
-import { diffName, fmtDate, fmtTime } from "@/lib/format";
+import { diffName, fmtDate, fmtTime, progressColor } from "@/lib/format";
 import type { Fight, ReportSummary } from "@/lib/types";
 
 export default async function ReportPage({ params }: { params: Promise<{ code: string }> }) {
@@ -56,7 +56,7 @@ export default async function ReportPage({ params }: { params: Promise<{ code: s
                   </h2>
                   <p className="text-xs text-muted">
                     {fights.length} pull{fights.length > 1 ? "s" : ""} ·{" "}
-                    {kill ? <span className="text-good">Killed</span> : <>Best: {best.toFixed(1)}%</>}
+                    {kill ? <span style={{ color: progressColor(0, true) }}>Killed</span> : <>Best: <span style={{ color: progressColor(best) }}>{best.toFixed(1)}%</span></>}
                   </p>
                 </div>
                 <Link
@@ -78,7 +78,7 @@ export default async function ReportPage({ params }: { params: Promise<{ code: s
                       <div className="flex justify-between text-sm">
                         <span>
                           Pull {i + 1}{" "}
-                          {f.kill ? <span className="text-good">Kill</span> : <span className="text-bad">{pct.toFixed(1)}%</span>}
+                          <span className="font-semibold" style={{ color: progressColor(pct, f.kill) }}>{f.kill ? "Kill" : `${pct.toFixed(1)}%`}</span>
                         </span>
                         <span className="text-muted tabular-nums">
                           {f.lastPhase ? `P${f.lastPhase} · ` : ""}
@@ -88,7 +88,7 @@ export default async function ReportPage({ params }: { params: Promise<{ code: s
                       <div className="mt-1.5 h-1.5 rounded bg-bg">
                         <div
                           className="h-1.5 rounded"
-                          style={{ width: `${100 - pct}%`, background: f.kill ? "var(--color-good)" : "var(--color-accent)" }}
+                          style={{ width: `${100 - pct}%`, background: progressColor(pct, f.kill) }}
                         />
                       </div>
                     </Link>
