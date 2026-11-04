@@ -86,6 +86,11 @@ export interface FightDetail {
   damageTaken: DamageEvent[];
   interrupts: InterruptEvent[];
   phases: PhaseInfo[];
+  /**
+   * Set by the progression loader: damageTaken then only holds these abilities' hits,
+   * already classified across all pulls.
+   */
+  knownAvoidable?: Record<number, "configured" | "heuristic">;
 }
 
 export interface GuildReport {

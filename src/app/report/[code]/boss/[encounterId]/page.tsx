@@ -112,7 +112,11 @@ export default async function BossPage({
         <section className="panel p-4">
           <h2 className="h2">Avoidable damage across pulls</h2>
           {prog.avoidable.length === 0 ? (
-            <p className="text-sm text-muted">Nothing flagged as avoidable.</p>
+            <p className="text-sm text-muted">
+              Nothing flagged. Over a whole night every boss ability ends up hitting most of the raid, so avoidable damage
+              can&apos;t be guessed here. List this boss&apos;s avoidable spell IDs under encounter {f0.encounterId} in{" "}
+              <code>src/config/encounters.ts</code> (spell IDs are shown on each pull&apos;s damage-taken table).
+            </p>
           ) : (
             <table className="data">
               <thead>

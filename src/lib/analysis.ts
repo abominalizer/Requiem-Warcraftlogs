@@ -94,7 +94,8 @@ export function analyzeFight(d: FightDetail): FightAnalysis {
     const hits = perPlayer.reduce((s, p) => s + p.hits, 0);
     const nonTankHit = perPlayer.filter((p) => byId.get(p.playerId)?.role !== "tank");
     let avoidable: AvoidableKind = null;
-    if (configured.has(id)) avoidable = "configured";
+    if (d.knownAvoidable) avoidable = d.knownAvoidable[id] ?? null;
+    else if (configured.has(id)) avoidable = "configured";
     else if (!ignored.has(id) && nonTanks.length >= 5) {
       // Heuristic: damage that only some of the raid takes, and some of them more than once,
       // tends to be "stood in it" damage. Shown as "possibly avoidable".
@@ -356,4 +357,27 @@ export function analyzeProgression(pulls: FightAnalysis[]): ProgressionAnalysis 
     deathCauses: [...causes.values()].sort((a, b) => b.count - a.count),
     avoidable: [...avoid.values()].sort((a, b) => b.hits - a.hits),
   };
+}
+
+/**
+ * Pick avoidable abilities from damage-taken totals summed over several pulls
+ * (used by the progression loader, which can't afford every damage event).
+ */
+export function pickAvoidable(
+  encounterId: number,
+  abilities: { id: number; hostile: boolean; hits: number; targets: string[] }[],
+  nonTankNames: Set<string>,
+): Record<number, "configured" | "heuristic"> {
+  const cfg = ENCOUNTERS[encounterId] ?? {};
+  const ignored = new Set([...(cfg.ignore ?? []), ...GLOBAL_IGNORE]);
+  const out: Record<number, "configured" | "heuristic"> = {};
+  for (const id of cfg.avoidable ?? []) out[id] = "configured";
+  if (nonTankNames.size < 5) return out;
+  for (const a of abilities) {
+    if (out[a.id] || ignored.has(a.id) || !a.hostile) continue;
+    const hitNonTanks = a.targets.filter((n) => nonTankNames.has(n)).length;
+    const share = hitNonTanks / nonTankNames.size;
+    if (hitNonTanks > 0 && share <= 0.4 && a.hits >= 3) out[a.id] = "heuristic";
+  }
+  return out;
 }

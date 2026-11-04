@@ -15,6 +15,7 @@ import type {
   Role,
 } from "./types";
 import { GUILD_ID } from "@/config/guild";
+import { pickAvoidable } from "./analysis";
 
 const API_URL = "https://www.warcraftlogs.com/api/v2/client";
 const TOKEN_URL = "https://www.warcraftlogs.com/oauth/token";
@@ -63,6 +64,7 @@ async function gql<T>(query: string, variables: Record<string, unknown>, ttlMs =
   if (hit && Date.now() - hit.at < hit.ttl) return hit.value as Promise<T>;
 
   const p = (async () => {
+    if (process.env.WCL_DEBUG) console.log("[wcl] request", query.slice(0, 60).replace(/\s+/g, " "));
     const res = await fetch(API_URL, {
       method: "POST",
       headers: { Authorization: `Bearer ${await getToken()}`, "Content-Type": "application/json" },
@@ -377,4 +379,189 @@ export async function fetchFightDetail(code: string, fightId: number): Promise<F
     interrupts: ints,
     phases: raw.phases?.find((p) => p.encounterID === fight.encounterId)?.phases ?? [],
   };
+}
+
+// ---------------------------------------------------------------- progression (many pulls, few requests)
+//
+// Cloudflare's free plan allows only 50 outgoing requests per page view, and downloading every
+// damage event for 20+ pulls is far too much data. So for a boss's progression we:
+//  1. sum damage taken per ability over all pulls in ONE table request, and pick the avoidable abilities,
+//  2. download individual hits only for those abilities (tiny),
+//  3. get deaths + interrupts for all pulls in one events request and DPS per pull in one batched request.
+
+
+async function fetchEventsMulti(code: string, fightIds: number[], s: number, e: number, type: string, filter?: string) {
+  const q = `query($code:String!,$f:[Int]!,$s:Float!,$e:Float!${filter ? ",$x:String!" : ""}){
+    reportData{ report(code:$code){
+      events(fightIDs:$f, dataType:${type}, startTime:$s, endTime:$e, limit:10000${filter ? ", filterExpression:$x" : ""}){ data nextPageTimestamp }
+    }}}`;
+  const out: RawEvent[] = [];
+  let start = s;
+  for (let i = 0; i < 20; i++) {
+    const d = await gql<{ reportData: { report: { events: { data: RawEvent[]; nextPageTimestamp: number | null } } } }>(
+      q,
+      { code, f: fightIds, s: start, e, ...(filter ? { x: filter } : {}) },
+      60 * 60_000,
+    );
+    const ev = d.reportData.report.events;
+    out.push(...(ev.data ?? []));
+    if (!ev.nextPageTimestamp || ev.nextPageTimestamp >= e) break;
+    start = ev.nextPageTimestamp;
+  }
+  return out;
+}
+
+/** Events for many fights at once: one GraphQL request per round, one alias per fight still paging. */
+async function fetchEventsPerFight(code: string, fights: Fight[], type: string, filter: string) {
+  const out: RawEvent[] = [];
+  let pending = fights.map((f) => ({ id: f.id, start: f.startTime, end: f.endTime }));
+  for (let round = 0; round < 8 && pending.length; round++) {
+    const aliases = pending
+      .map((p) => `e${p.id}: events(fightIDs:[${p.id}], dataType:${type}, startTime:${p.start}, endTime:${p.end}, limit:10000, filterExpression:$x){ data nextPageTimestamp }`)
+      .join("\n");
+    const q = `query($code:String!,$x:String!){ reportData{ report(code:$code){ ${aliases} }}}`;
+    const d = await gql<{ reportData: { report: Record<string, { data: RawEvent[]; nextPageTimestamp: number | null }> } }>(
+      q,
+      { code, x: filter },
+      60 * 60_000,
+    );
+    const next: typeof pending = [];
+    for (const p of pending) {
+      const ev = d.reportData.report[`e${p.id}`];
+      out.push(...(ev?.data ?? []));
+      if (ev?.nextPageTimestamp && ev.nextPageTimestamp < p.end) next.push({ ...p, start: ev.nextPageTimestamp });
+    }
+    pending = next;
+  }
+  return out;
+}
+
+export async function fetchProgressionDetails(code: string, fightIds: number[]): Promise<FightDetail[]> {
+  const raw = await fetchRawReport(code);
+  const rfs = fightIds.map((id) => {
+    const f = raw.fights.find((x) => x.id === id);
+    if (!f) throw new WclError(`Fight ${id} not found in report ${code}.`);
+    return f;
+  });
+  const fights = rfs.map(normalizeFight);
+  const s = Math.min(...fights.map((f) => f.startTime));
+  const e = Math.max(...fights.map((f) => f.endTime));
+  const encounterId = fights[0].encounterId;
+
+  // DPS per pull + roles + damage-taken totals per ability, all in one request.
+  const ddAliases = fights
+    .map((f) => `dd${f.id}: table(fightIDs:[${f.id}], dataType:DamageDone, startTime:${f.startTime}, endTime:${f.endTime})`)
+    .join("\n");
+  const batch = `query($code:String!,$f:[Int]!,$s:Float!,$e:Float!){
+    reportData{ report(code:$code){
+      pd: playerDetails(fightIDs:$f, startTime:$s, endTime:$e)
+      dt: table(fightIDs:$f, dataType:DamageTaken, viewBy:Ability, startTime:$s, endTime:$e)
+      dtt: table(fightIDs:$f, dataType:DamageTaken, viewBy:Target, startTime:$s, endTime:$e)
+      ${ddAliases}
+    }}}`;
+  const vars = { code, f: fightIds, s, e };
+  const [b, deathEvents, kickEvents] = await Promise.all([
+    gql<{ reportData: { report: Record<string, any> } }>(batch, vars, 60 * 60_000),
+    fetchEventsMulti(code, fightIds, s, e, "Deaths"),
+    fetchEventsMulti(code, fightIds, s, e, "Interrupts"),
+  ]);
+  const deathsAndKicks = [...deathEvents, ...kickEvents];
+  const rep = b.reportData.report;
+
+  const actors = new Map(raw.masterData.actors.map((a) => [a.id, a]));
+  const pd = rep.pd?.data?.playerDetails ?? rep.pd?.playerDetails ?? {};
+  const roster: Player[] = [];
+  const addRole = (list: any[] | undefined, role: Role) => {
+    for (const p of list ?? [])
+      roster.push({
+        id: p.id,
+        name: p.name ?? actors.get(p.id)?.name ?? `#${p.id}`,
+        className: p.type ?? actors.get(p.id)?.subType ?? "Unknown",
+        spec: p.specs?.[0]?.spec ?? p.specs?.[0],
+        role,
+      });
+  };
+  addRole(pd.tanks, "tank");
+  addRole(pd.healers, "healer");
+  addRole(pd.dps, "dps");
+  const rosterIds = new Set(roster.map((p) => p.id));
+  const owner = (id: number) => {
+    const a = actors.get(id);
+    return a?.petOwner && rosterIds.has(a.petOwner) ? a.petOwner : id;
+  };
+
+  // Pick avoidable abilities from the summed table, then fetch only their hits.
+  const dtEntries = tableEntries(rep.dt);
+  // The by-ability table only lists each ability's top 5 targets, so count who got hit from the by-player table.
+  const hitBy = new Map<number, string[]>();
+  for (const p of tableEntries(rep.dtt))
+    for (const a of p.abilities ?? []) hitBy.set(a.guid, [...(hitBy.get(a.guid) ?? []), p.name]);
+  const knownAvoidable = pickAvoidable(
+    encounterId,
+    dtEntries.map((a) => ({
+      id: a.guid,
+      hostile: a.actorType === "Boss" || a.actorType === "NPC",
+      hits: (a.hitCount ?? 0) + (a.tickCount ?? 0),
+      targets: hitBy.get(a.guid) ?? [],
+    })),
+    new Set(roster.filter((p) => p.role !== "tank").map((p) => p.name)),
+  );
+  const avoidIds = Object.keys(knownAvoidable).map(Number);
+  const hits = avoidIds.length
+    ? await fetchEventsPerFight(code, fights, "DamageTaken", `ability.id in (${avoidIds.join(",")})`)
+    : [];
+
+  const abilities: Record<number, Ability> = {};
+  for (const a of raw.masterData.abilities) abilities[a.gameID] = { id: a.gameID, name: a.name, icon: a.icon };
+  const phases = raw.phases?.find((p) => p.encounterID === encounterId)?.phases ?? [];
+
+  return fights.map((fight) => {
+    const inFight = (ev: RawEvent) => ev.fight === fight.id;
+    const damageDone: AmountEntry[] = [];
+    const totals = new Map<number, number>();
+    for (const x of tableEntries(rep[`dd${fight.id}`])) {
+      const id = owner(x.id);
+      if (rosterIds.has(id)) totals.set(id, (totals.get(id) ?? 0) + (x.total ?? 0));
+    }
+    for (const [playerId, total] of totals) damageDone.push({ playerId, total });
+    const players = roster.filter((p) => totals.has(p.id));
+    const present = new Set(players.map((p) => p.id));
+
+    return {
+      report: { code: raw.code, title: raw.title },
+      fight,
+      players,
+      abilities,
+      damageDone,
+      healing: [],
+      deaths: deathsAndKicks
+        .filter((d) => inFight(d) && d.type === "death" && present.has(d.targetID as number))
+        .map((d) => ({ playerId: d.targetID as number, t: d.timestamp, killingAbilityId: (d.killingAbilityGameID as number) || null })),
+      damageTaken: hits
+        .filter((h) => {
+          const src = actors.get(h.sourceID as number);
+          const friendly = src && (src.type === "Player" || src.type === "Pet" || src.petOwner);
+          return inFight(h) && h.type === "damage" && present.has(h.targetID as number) && !friendly;
+        })
+        .map((h) => ({
+          t: h.timestamp,
+          targetId: h.targetID as number,
+          sourceId: (h.sourceID as number) ?? -1,
+          abilityId: (h.abilityGameID as number) ?? 0,
+          amount: ((h.amount as number) ?? 0) + ((h.absorbed as number) ?? 0),
+          overkill: (h.overkill as number) ?? 0,
+        })),
+      interrupts: deathsAndKicks
+        .filter((k) => inFight(k) && k.type === "interrupt")
+        .map((k) => ({
+          t: k.timestamp,
+          sourceId: owner(k.sourceID as number),
+          abilityId: (k.abilityGameID as number) ?? 0,
+          interruptedId: (k.extraAbilityGameID as number) ?? 0,
+        }))
+        .filter((k) => present.has(k.sourceId)),
+      phases,
+      knownAvoidable,
+    };
+  });
 }
