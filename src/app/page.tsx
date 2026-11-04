@@ -16,28 +16,32 @@ interface BossProgress {
   firstKill: number | null;
   best: number;
   pulls: number;
+  /** first kill's pull page if killed, otherwise the list of all pulls */
   link: string | null;
+  pullsLink: string | null;
 }
 
-/** Progress per boss at the highest difficulty the guild has pulled it on. */
+/** Progress per boss at the highest difficulty the guild has pulled it on, over every log of the raid. */
 function bossProgress(home: GuildHome): BossProgress[] {
   if (!home.zone) return [];
-  const zoneReports = home.reports.filter((r) => r.zone?.id === home.zone!.id); // newest first
   return home.zone.encounters.map((enc) => {
-    const pulls = zoneReports.flatMap((r) => r.fights.filter((f) => f.encounterId === enc.id).map((f) => ({ ...f, report: r })));
+    const pulls = home.zoneReports
+      .flatMap((r) => r.fights.filter((f) => f.encounterId === enc.id).map((f) => ({ ...f, report: r })))
+      .sort((a, b) => a.report.startTime + a.startTime - (b.report.startTime + b.startTime)); // oldest first
     const top = Math.max(-1, ...pulls.map((p) => p.difficulty ?? 0));
     const atTop = pulls.filter((p) => (p.difficulty ?? 0) === top);
-    const kills = atTop.filter((p) => p.kill);
-    const latest = atTop[0]?.report;
+    const firstKill = atTop.find((p) => p.kill);
+    const pullsLink = atTop.length ? `/boss/${enc.id}?difficulty=${top}` : null;
     return {
       id: enc.id,
       name: enc.name,
       difficulty: atTop.length ? top : null,
-      killed: kills.length > 0,
-      firstKill: kills.length ? kills[kills.length - 1].report.startTime : null,
+      killed: Boolean(firstKill),
+      firstKill: firstKill ? firstKill.report.startTime + firstKill.startTime : null,
       best: atTop.length ? Math.min(...atTop.map((p) => p.percent)) : 100,
       pulls: atTop.length,
-      link: latest ? `/report/${latest.code}/boss/${enc.id}?difficulty=${top}` : null,
+      link: firstKill ? `/report/${firstKill.report.code}/fight/${firstKill.id}` : pullsLink,
+      pullsLink,
     };
   });
 }
@@ -114,8 +118,8 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
           ) : (
             <ul className="divide-y divide-line/50">
               {progress.map((b) => {
-                const row = (
-                  <div className="flex items-center gap-3 py-2">
+                const main = (
+                  <>
                     <span className="w-7 text-center text-xs font-semibold text-muted">{diffShort(b.difficulty)}</span>
                     <span className="flex-1">
                       <span className={b.pulls ? "" : "text-muted"}>{b.name}</span>
@@ -129,33 +133,48 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
                         />
                       </div>
                     </span>
-                    <span className="w-36 text-right text-sm tabular-nums">
+                    <span className="w-28 text-right text-sm tabular-nums">
                       {b.killed ? (
-                        <span className="text-good">Killed {b.firstKill && new Date(b.firstKill).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+                        <span className="text-good">
+                          Killed {b.firstKill && new Date(b.firstKill).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                        </span>
                       ) : b.pulls ? (
-                        <span>Best <span style={{ color: progressColor(b.best) }}>{b.best.toFixed(1)}%</span></span>
+                        <span>
+                          Best <span style={{ color: progressColor(b.best) }}>{b.best.toFixed(1)}%</span>
+                        </span>
                       ) : (
                         <span className="text-muted">Not pulled</span>
                       )}
-                      {b.pulls > 0 && <div className="text-xs text-muted">{b.pulls} pulls</div>}
                     </span>
-                  </div>
+                  </>
                 );
                 return (
-                  <li key={b.id}>
+                  <li key={b.id} className="flex items-center gap-1">
                     {b.link ? (
-                      <Link prefetch={false} href={b.link} className="block rounded px-1 hover:bg-panel-2/60">
-                        {row}
+                      <Link
+                        prefetch={false}
+                        href={b.link}
+                        title={b.killed ? "Open the first kill" : "Show all pulls"}
+                        className="flex flex-1 items-center gap-3 rounded px-1 py-2 hover:bg-panel-2/60"
+                      >
+                        {main}
                       </Link>
                     ) : (
-                      <div className="px-1">{row}</div>
+                      <div className="flex flex-1 items-center gap-3 px-1 py-2">{main}</div>
                     )}
+                    <span className="w-16 text-right text-xs">
+                      {b.pullsLink && (
+                        <Link prefetch={false} href={b.pullsLink} className="text-muted hover:text-info hover:underline" title="Show all pulls">
+                          {b.pulls} pulls
+                        </Link>
+                      )}
+                    </span>
                   </li>
                 );
               })}
             </ul>
           )}
-          <p className="mt-2 text-xs text-muted">Based on the guild&apos;s last {home.reports.length} logs. Click a boss for its progression analysis.{" "}
+          <p className="mt-2 text-xs text-muted">Based on all {home.zoneReports.length} logs of this raid. Click a boss to open its first kill (or all pulls if not killed yet).{" "}
             <Link prefetch={false} href="/raid" className="text-info hover:underline">
               Mark avoidable spells →
             </Link></p>

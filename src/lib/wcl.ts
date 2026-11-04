@@ -127,62 +127,99 @@ async function gql<T>(
 
 // ---------------------------------------------------------------- guild
 
+const REPORT_FIGHTS = `fights(killType: Encounters){ id startTime endTime encounterID name kill difficulty fightPercentage bossPercentage lastPhase }`;
+
 const GUILD_QUERY = `query($id:Int!){
   guildData{ guild(id:$id){ id name faction{ name } server{ name region{ slug } } } }
   reportData{ reports(guildID:$id, limit:25){
-    data{ code title startTime endTime zone{ id name encounters{ id name } }
-      fights(killType: Encounters){ id startTime endTime encounterID name kill difficulty fightPercentage bossPercentage } }
+    data{ code title startTime endTime zone{ id name encounters{ id name } } ${REPORT_FIGHTS} }
   }}}`;
 
+// Every log of the current raid (for progression, first kills and the list of all pulls on a boss).
+// Pages of 25: Warcraft Logs rejects bigger pages of reports-with-fights as too complex.
+const ZONE_HISTORY_QUERY = `query($id:Int!,$zone:Int!,$page:Int!){
+  reportData{ reports(guildID:$id, zoneID:$zone, limit:25, page:$page){
+    has_more_pages
+    data{ code title startTime endTime zone{ id name } ${REPORT_FIGHTS} }
+  }}}`;
+
+type RawGuildReport = {
+  code: string;
+  title: string;
+  startTime: number;
+  endTime: number;
+  zone: { id: number; name: string; encounters?: { id: number; name: string }[] } | null;
+  fights:
+    | {
+        id: number;
+        startTime: number;
+        endTime: number;
+        encounterID: number;
+        name: string;
+        kill: boolean | null;
+        difficulty: number | null;
+        fightPercentage: number | null;
+        bossPercentage: number | null;
+        lastPhase: number | null;
+      }[]
+    | null;
+};
+
+const toSummary = (r: RawGuildReport): GuildReportSummary => ({
+  code: r.code,
+  title: r.title,
+  startTime: r.startTime,
+  endTime: r.endTime,
+  zone: r.zone ? { id: r.zone.id, name: r.zone.name } : null,
+  fights: (r.fights ?? [])
+    .filter((f) => f.encounterID > 0)
+    .map((f) => ({
+      id: f.id,
+      startTime: f.startTime,
+      endTime: f.endTime,
+      encounterId: f.encounterID,
+      name: f.name,
+      kill: Boolean(f.kill),
+      difficulty: f.difficulty,
+      percent: f.kill ? 0 : (f.fightPercentage ?? f.bossPercentage ?? 100),
+      lastPhase: f.lastPhase,
+    })),
+});
 
 export async function fetchGuildHome(): Promise<GuildHome> {
   type R = {
     guildData: {
       guild: { id: number; name: string; faction: { name: string } | null; server: { name: string; region: { slug: string } } } | null;
     };
-    reportData: {
-      reports: {
-        data: {
-          code: string;
-          title: string;
-          startTime: number;
-          endTime: number;
-          zone: { id: number; name: string; encounters: { id: number; name: string }[] } | null;
-          fights: { id: number; startTime: number; endTime: number; encounterID: number; name: string; kill: boolean | null; difficulty: number | null; fightPercentage: number | null; bossPercentage: number | null }[] | null;
-        }[];
-      };
-    };
+    reportData: { reports: { data: RawGuildReport[] } };
   };
   const d = await gql<R>(GUILD_QUERY, { id: GUILD_ID }, 10 * MINUTE);
   const g = d.guildData.guild;
   if (!g) throw new WclError(`Guild ${GUILD_ID} not found on Warcraft Logs.`);
-  const reports: GuildReportSummary[] = d.reportData.reports.data.map((r) => ({
-    code: r.code,
-    title: r.title,
-    startTime: r.startTime,
-    endTime: r.endTime,
-    zone: r.zone ? { id: r.zone.id, name: r.zone.name } : null,
-    fights: (r.fights ?? [])
-      .filter((f) => f.encounterID > 0)
-      .map((f) => ({
-        id: f.id,
-        startTime: f.startTime,
-        endTime: f.endTime,
-        encounterId: f.encounterID,
-        name: f.name,
-        kill: Boolean(f.kill),
-        difficulty: f.difficulty,
-        percent: f.kill ? 0 : (f.fightPercentage ?? f.bossPercentage ?? 100),
-      })),
-  }));
+  const reports = d.reportData.reports.data.map(toSummary);
 
   // Current raid = zone of the most recent report that has boss pulls.
   const latest = d.reportData.reports.data.find((r) => r.zone && (r.fights ?? []).some((f) => f.encounterID > 0));
-  const zone: GuildHome["zone"] = latest?.zone ?? null;
+  const zone: GuildHome["zone"] = latest?.zone ? { id: latest.zone.id, name: latest.zone.name, encounters: latest.zone.encounters ?? [] } : null;
+
+  // All logs of that raid, newest first (up to 200).
+  const zoneReports: GuildReportSummary[] = [];
+  if (zone) {
+    for (let page = 1; page <= 8; page++) {
+      const z = await gql<{ reportData: { reports: { has_more_pages: boolean; data: RawGuildReport[] } } }>(
+        ZONE_HISTORY_QUERY,
+        { id: GUILD_ID, zone: zone.id, page },
+        10 * MINUTE,
+      );
+      zoneReports.push(...z.reportData.reports.data.map(toSummary));
+      if (!z.reportData.reports.has_more_pages) break;
+    }
+  }
   return {
     guild: { id: g.id, name: g.name, faction: g.faction?.name ?? null, server: g.server.name, region: g.server.region.slug },
     reports,
     zone,
+    zoneReports,
   };
 }
 
@@ -678,7 +715,7 @@ async function fetchDamageTakenSummary(
  */
 export async function fetchRaidSpells(home: GuildHome): Promise<RaidBoss[]> {
   if (!home.zone) return [];
-  const zoneReports = home.reports.filter((r) => r.zone?.id === home.zone!.id);
+  const zoneReports = home.zoneReports;
   const picks = home.zone.encounters.map((enc) => {
     const pulls = zoneReports.flatMap((r) => r.fights.filter((f) => f.encounterId === enc.id).map((f) => ({ f, r })));
     const top = Math.max(-1, ...pulls.map((p) => p.f.difficulty ?? 0));

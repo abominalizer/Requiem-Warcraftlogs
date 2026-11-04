@@ -120,6 +120,7 @@ export interface GuildFight {
   kill: boolean;
   difficulty: number | null;
   percent: number; // encounter progress remaining, 0 for kills
+  lastPhase: number | null;
 }
 
 export interface GuildReportSummary {
@@ -135,6 +136,8 @@ export interface GuildHome {
   guild: GuildInfo;
   reports: GuildReportSummary[];
   zone: { id: number; name: string; encounters: { id: number; name: string }[] } | null;
+  /** every log of the current raid, newest first */
+  zoneReports: GuildReportSummary[];
 }
 
 /** Damage taken from enemies, summed over a set of pulls. */
