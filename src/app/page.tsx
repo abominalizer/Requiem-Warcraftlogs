@@ -155,7 +155,10 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
               })}
             </ul>
           )}
-          <p className="mt-2 text-xs text-muted">Based on the guild&apos;s last {home.reports.length} logs. Click a boss for its progression analysis.</p>
+          <p className="mt-2 text-xs text-muted">Based on the guild&apos;s last {home.reports.length} logs. Click a boss for its progression analysis.{" "}
+            <Link prefetch={false} href="/raid" className="text-info hover:underline">
+              Mark avoidable spells →
+            </Link></p>
         </section>
 
         <div className="space-y-6">

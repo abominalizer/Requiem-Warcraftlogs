@@ -1,5 +1,5 @@
 import "server-only";
-import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { kvGet, kvPut } from "./kv";
 import type {
   Ability,
   AmountEntry,
@@ -11,6 +11,8 @@ import type {
   GuildHome,
   MultiPull,
   GuildReportSummary,
+  RaidBoss,
+  RaidSpell,
   InterruptEvent,
   PhaseInfo,
   Player,
@@ -18,7 +20,6 @@ import type {
   Role,
 } from "./types";
 import { GUILD_ID } from "@/config/guild";
-import { ENCOUNTERS } from "@/config/encounters";
 
 const API_URL = "https://www.warcraftlogs.com/api/v2/client";
 const TOKEN_URL = "https://www.warcraftlogs.com/oauth/token";
@@ -37,38 +38,6 @@ export function hasCredentials() {
 
 const MINUTE = 60_000;
 const FOREVER = 30 * 24 * 60 * MINUTE;
-
-type KV = {
-  get(key: string, type: "json"): Promise<unknown>;
-  put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void>;
-};
-
-function cloudflare(): { kv: KV | null; waitUntil: (p: Promise<unknown>) => void } {
-  try {
-    const ctx = getCloudflareContext();
-    const kv = (ctx.env as unknown as { WCL_CACHE?: KV }).WCL_CACHE ?? null;
-    return { kv, waitUntil: (p) => ctx.ctx.waitUntil(p) };
-  } catch {
-    return { kv: null, waitUntil: () => {} }; // not running on Cloudflare (e.g. `npm run dev`)
-  }
-}
-
-async function kvGet<T>(key: string): Promise<T | null> {
-  const { kv } = cloudflare();
-  if (!kv) return null;
-  try {
-    return (await kv.get(key, "json")) as T | null;
-  } catch {
-    return null;
-  }
-}
-
-function kvPut(key: string, value: unknown, ttlMs: number) {
-  const { kv, waitUntil } = cloudflare();
-  if (!kv) return;
-  // don't make the visitor wait for the write; ignore failures (e.g. the free plan's daily write limit)
-  waitUntil(kv.put(key, JSON.stringify(value), { expirationTtl: Math.max(60, Math.round(ttlMs / 1000)) }).catch(() => {}));
-}
 
 async function sha256(text: string) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -162,7 +131,7 @@ const GUILD_QUERY = `query($id:Int!){
   guildData{ guild(id:$id){ id name faction{ name } server{ name region{ slug } } } }
   reportData{ reports(guildID:$id, limit:25){
     data{ code title startTime endTime zone{ id name encounters{ id name } }
-      fights(killType: Encounters){ encounterID name kill difficulty fightPercentage bossPercentage } }
+      fights(killType: Encounters){ id startTime endTime encounterID name kill difficulty fightPercentage bossPercentage } }
   }}}`;
 
 
@@ -179,7 +148,7 @@ export async function fetchGuildHome(): Promise<GuildHome> {
           startTime: number;
           endTime: number;
           zone: { id: number; name: string; encounters: { id: number; name: string }[] } | null;
-          fights: { encounterID: number; name: string; kill: boolean | null; difficulty: number | null; fightPercentage: number | null; bossPercentage: number | null }[] | null;
+          fights: { id: number; startTime: number; endTime: number; encounterID: number; name: string; kill: boolean | null; difficulty: number | null; fightPercentage: number | null; bossPercentage: number | null }[] | null;
         }[];
       };
     };
@@ -196,6 +165,9 @@ export async function fetchGuildHome(): Promise<GuildHome> {
     fights: (r.fights ?? [])
       .filter((f) => f.encounterID > 0)
       .map((f) => ({
+        id: f.id,
+        startTime: f.startTime,
+        endTime: f.endTime,
         encounterId: f.encounterID,
         name: f.name,
         kill: Boolean(f.kill),
@@ -513,7 +485,7 @@ async function fetchEventsPerFight(code: string, fights: Fight[], type: string, 
 export async function fetchMultiPull(
   code: string,
   fightIds: number[],
-  opts: { damageTaken?: boolean } = {},
+  opts: { damageTaken?: boolean; avoidable?: Record<number, number[]> } = {},
 ): Promise<MultiPull> {
   const raw = await fetchRawReport(code);
   const rfs = fightIds.map((id) => {
@@ -579,8 +551,8 @@ export async function fetchMultiPull(
 
   // Avoidable = what you configured per boss in src/config/encounters.ts. Fetch only those hits.
   const avoidableFor = (encounterId: number): Record<number, "configured"> =>
-    Object.fromEntries((ENCOUNTERS[encounterId]?.avoidable ?? []).map((id) => [id, "configured" as const]));
-  const avoidIds = [...new Set(fights.flatMap((f) => ENCOUNTERS[f.encounterId]?.avoidable ?? []))];
+    Object.fromEntries((opts.avoidable?.[encounterId] ?? []).map((id) => [id, "configured" as const]));
+  const avoidIds = [...new Set(fights.flatMap((f) => opts.avoidable?.[f.encounterId] ?? []))];
   const hits = avoidIds.length
     ? await fetchEventsPerFight(code, fights, "DamageTaken", `ability.id in (${avoidIds.join(",")})`, ttl)
     : [];
@@ -695,4 +667,61 @@ async function fetchDamageTakenSummary(
     if (total > 0) byPlayer.push({ playerId: p.id, total, abilities: per });
   }
   return { abilities: [...byAbility.values()].sort((a, b) => b.total - a.total), byPlayer };
+}
+
+// ---------------------------------------------------------------- raid page: the spells of every boss
+
+/**
+ * For every boss of the current raid, the enemy spells that damaged the raid, taken from the guild's best
+ * pull of that boss (the kill, or the attempt that got furthest) at the highest difficulty pulled.
+ * One request for all bosses; cached forever per pull.
+ */
+export async function fetchRaidSpells(home: GuildHome): Promise<RaidBoss[]> {
+  if (!home.zone) return [];
+  const zoneReports = home.reports.filter((r) => r.zone?.id === home.zone!.id);
+  const picks = home.zone.encounters.map((enc) => {
+    const pulls = zoneReports.flatMap((r) => r.fights.filter((f) => f.encounterId === enc.id).map((f) => ({ f, r })));
+    const top = Math.max(-1, ...pulls.map((p) => p.f.difficulty ?? 0));
+    const best = pulls
+      .filter((p) => (p.f.difficulty ?? 0) === top)
+      .sort((a, b) => a.f.percent - b.f.percent || b.r.startTime - a.r.startTime)[0];
+    return { enc, best, top };
+  });
+
+  const byReport = new Map<string, string[]>();
+  for (const { enc, best } of picks) {
+    if (!best) continue;
+    const alias = `b${enc.id}: table(fightIDs:[${best.f.id}], dataType:DamageTaken, viewBy:Ability, startTime:${best.f.startTime}, endTime:${best.f.endTime})`;
+    byReport.set(best.r.code, [...(byReport.get(best.r.code) ?? []), alias]);
+  }
+  const reportAliases = [...byReport].map(([code, tables]) => `r_${code}: report(code:"${code}"){ ${tables.join(" ")} }`);
+  const d = reportAliases.length
+    ? await gql<{ reportData: Record<string, Record<string, any>> }>(`{ reportData{ ${reportAliases.join(" ")} } }`, {}, FOREVER)
+    : null;
+
+  return picks.map(({ enc, best, top }) => {
+    const spells = new Map<string, RaidSpell>();
+    if (best) {
+      for (const a of tableEntries(d?.reportData[`r_${best.r.code}`]?.[`b${enc.id}`])) {
+        const sources: { type?: string }[] = a.sources ?? [];
+        const hostile =
+          a.actorType === "Boss" || a.actorType === "NPC" || (sources.length > 0 && sources.every((x) => x.type === "Boss" || x.type === "NPC"));
+        if (!hostile || !a.total || a.guid <= 1) continue;
+        const cur: RaidSpell = spells.get(a.name) ?? { ids: [] as number[], name: a.name, icon: a.abilityIcon, total: 0, hits: 0 };
+        if (!cur.ids.includes(a.guid)) cur.ids.push(a.guid);
+        cur.total += a.total;
+        cur.hits += (a.hitCount ?? 0) + (a.tickCount ?? 0);
+        spells.set(a.name, cur);
+      }
+    }
+    return {
+      encounterId: enc.id,
+      name: enc.name,
+      difficulty: best ? top : null,
+      source: best
+        ? { code: best.r.code, fightId: best.f.id, kill: best.f.kill, percent: best.f.percent, date: best.r.startTime }
+        : null,
+      spells: [...spells.values()].sort((a, b) => b.total - a.total),
+    };
+  });
 }

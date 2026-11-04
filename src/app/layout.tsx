@@ -18,6 +18,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             </Link>
             <nav className="flex gap-4 text-sm text-muted">
               <Link prefetch={false} href="/" className="hover:text-fg">Home</Link>
+              <Link prefetch={false} href="/raid" className="hover:text-fg">
+                Raid
+              </Link>
             </nav>
           </div>
         </header>

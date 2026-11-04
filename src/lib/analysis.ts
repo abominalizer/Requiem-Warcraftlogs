@@ -72,7 +72,7 @@ export function analyzeFight(d: FightDetail): FightAnalysis {
   const secs = dur / 1000;
   const byId = new Map(d.players.map((p) => [p.id, p]));
   const cfg = ENCOUNTERS[fight.encounterId] ?? {};
-  const configured = new Set(cfg.avoidable ?? []);
+  const configured = new Set(d.avoidableIds ?? cfg.avoidable ?? []);
   const ignored = new Set([...(cfg.ignore ?? []), ...GLOBAL_IGNORE]);
   const phases = phaseSegments(d);
   const phaseAt = (t: number) => phases.findLast((p) => p.start <= t)?.name ?? null;
@@ -95,7 +95,8 @@ export function analyzeFight(d: FightDetail): FightAnalysis {
     let avoidable: AvoidableKind = null;
     if (d.knownAvoidable) avoidable = d.knownAvoidable[id] ?? null;
     else if (configured.has(id)) avoidable = "configured";
-    else if (!ignored.has(id) && nonTanks.length >= 5) {
+    else if (configured.size === 0 && !ignored.has(id) && nonTanks.length >= 5) {
+      // only guess for bosses nobody has marked avoidable spells for yet
       // Heuristic: damage that only some of the raid takes, and some of them more than once,
       // tends to be "stood in it" damage. Shown as "possibly avoidable".
       const share = nonTankHit.length / nonTanks.length;

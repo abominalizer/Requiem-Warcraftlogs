@@ -11,6 +11,10 @@ It only works with Requiem's logs. Reports from other guilds are rejected.
 - **Raid nights**: the most recent raid nights, with their length and each boss pulled that night (kill or best %, number of pulls).
 - **Open a log**: paste any Requiem Warcraft Logs link to jump straight to it.
 
+## Raid
+
+Every boss of the current raid with the enemy spells that hit us, taken from our best pull of each boss. Officers tick the spells nobody should get hit by (frontals, pools, swirls) and save them with the officer password. Those spells then count as avoidable damage everywhere on the site.
+
 ## Raid night
 
 All boss pulls of the night, grouped by boss and difficulty. Each pull shows how far we got, the phase reached and how long it lasted.
@@ -45,7 +49,7 @@ All pulls on one boss in a night: a chart of how far each pull got, what kills u
 
 - **Pull colours** show how close we were to a kill, the same way Warcraft Logs colours them: grey (under 25% through the fight), green (25%+), blue (50%+), purple (75%+), orange (90%+) and gold for kills.
 - **Deaths before the wipe** are the ones that matter. Deaths in the last 20 seconds of a wipe, or after half the raid is already dead, are greyed out and not held against anyone.
-- **Avoidable damage** is damage nobody should take (frontals, pools, swirls). The avoidable spells are listed per boss. On a single pull the site also points out damage that looks avoidable, meaning it only hit part of the raid and some players repeatedly. That is marked "possibly avoidable".
+- **Avoidable damage** is damage nobody should take (frontals, pools, swirls), as marked per boss on the Raid page. For bosses with nothing marked yet, a single pull also points out damage that looks avoidable, meaning it only hit part of the raid and some players repeatedly. That is marked "possibly avoidable".
 - **Damage taken** only counts damage from enemies. Self-damage, trinkets and friendly fire are left out.
 
 Data comes from the Warcraft Logs API. The site is not affiliated with Warcraft Logs or Blizzard Entertainment.

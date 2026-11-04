@@ -91,6 +91,8 @@ export interface FightDetail {
    * already classified across all pulls.
    */
   knownAvoidable?: Record<number, "configured" | "heuristic">;
+  /** Avoidable spell ids for this boss (marked on the Raid page). When set, nothing is guessed. */
+  avoidableIds?: number[];
 }
 
 export interface GuildReport {
@@ -110,6 +112,9 @@ export interface GuildInfo {
 }
 
 export interface GuildFight {
+  id: number;
+  startTime: number;
+  endTime: number;
   encounterId: number;
   name: string;
   kill: boolean;
@@ -141,4 +146,22 @@ export interface DamageTakenSummary {
 export interface MultiPull {
   details: FightDetail[];
   damageTaken: DamageTakenSummary;
+}
+
+export interface RaidSpell {
+  /** all spell ids sharing this name */
+  ids: number[];
+  name: string;
+  icon?: string;
+  total: number;
+  hits: number;
+}
+
+export interface RaidBoss {
+  encounterId: number;
+  name: string;
+  difficulty: number | null;
+  /** the pull the spell list was taken from */
+  source: { code: string; fightId: number; kill: boolean; percent: number; date: number } | null;
+  spells: RaidSpell[];
 }
