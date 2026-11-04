@@ -37,6 +37,8 @@ From any pull, compare against a kill by a guild close to our world rank (same r
 
 - **Phase timing**: when each phase started for us and for them.
 - **Damage taken per minute, by spell**: sorted by where we take the most extra damage; spells that never hit them stand out.
+- **Per phase**: time in the phase, raid DPS and damage done, for both guilds.
+- **Bloodlust / Heroism / Time Warp**: when it was used, by whom, and in which phase.
 - **Deaths**, **raid DPS** and **team makeup** side by side.
 
 ## Combined analysis

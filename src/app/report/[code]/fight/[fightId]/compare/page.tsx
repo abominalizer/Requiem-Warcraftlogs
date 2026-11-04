@@ -3,7 +3,7 @@ import { AbilityName, Breadcrumbs, ErrorBox, PlayerName, Stat } from "@/componen
 import { analyzeFight, type FightAnalysis } from "@/lib/analysis";
 import { getFight, getReport } from "@/lib/data";
 import { abilityIconUrl, classColor, diffName, fmtDate, fmtNum, fmtTime, progressColor } from "@/lib/format";
-import { fetchForeignKill, fetchGuildHome, fetchKillTargets, type ForeignKill, type KillTargets } from "@/lib/wcl";
+import { fetchForeignKill, fetchGuildHome, fetchKillTargets, fetchPhaseDamage, type ForeignKill, type KillTargets, type PhaseDamage } from "@/lib/wcl";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +20,8 @@ export default async function ComparePage({
   let a: FightAnalysis;
   let targets: KillTargets;
   let them: ForeignKill | null = null;
+  let ourPD: PhaseDamage | null = null;
+  let theirPD: PhaseDamage | null = null;
   let pullNo = 0;
   try {
     const [detail, report, home] = await Promise.all([getFight(code, Number(fightId)), getReport(code), fetchGuildHome()]);
@@ -41,6 +43,12 @@ export default async function ComparePage({
     for (const pick of order) {
       them = await fetchForeignKill(pick, f.encounterId, f.difficulty ?? 5, ourLast);
       if (them) break;
+    }
+    if (them) {
+      [ourPD, theirPD] = await Promise.all([
+        fetchPhaseDamage(code, f.id, null),
+        fetchPhaseDamage(them.code, them.fightId, them.windowMs, { anyGuild: true }),
+      ]);
     }
   } catch (e) {
     return <ErrorBox message={(e as Error).message} />;
@@ -69,17 +77,40 @@ export default async function ComparePage({
   const theirMin = them.windowMs / 60000;
   const blamed = a.deaths.filter((d) => !d.inWipe);
 
-  // ---- phases side by side
-  const phaseIds = [...new Set([...a.phases.map((p) => p.id), ...them.phases.map((p) => p.id)])];
+  // ---- phases side by side: when reached, time spent, damage and DPS
+  const agg = (pd: PhaseDamage | null) => {
+    const m = new Map<number, { reached: number; ms: number; damage: number }>();
+    for (const g of pd?.segments ?? []) {
+      const e = m.get(g.id) ?? { reached: g.startMs, ms: 0, damage: 0 };
+      e.ms += g.endMs - g.startMs;
+      e.damage += g.damage;
+      m.set(g.id, e);
+    }
+    return m;
+  };
+  const ours = agg(ourPD);
+  const theirs = agg(theirPD);
+  const phaseIds = [...new Set([...ours.keys(), ...theirs.keys(), ...a.phases.map((p) => p.id), ...them.phases.map((p) => p.id)])];
   const phaseRows = phaseIds
     .map((id) => ({
       id,
       name: a.phases.find((p) => p.id === id)?.name ?? them!.phases.find((p) => p.id === id)?.name ?? `Phase ${id}`,
       intermission: them!.phases.find((p) => p.id === id)?.isIntermission ?? a.phases.find((p) => p.id === id)?.isIntermission ?? false,
-      ours: a.phases.find((p) => p.id === id)?.start ?? null,
-      theirs: them!.phases.find((p) => p.id === id)?.startMs ?? null,
+      ours: ours.get(id) ?? null,
+      theirs: theirs.get(id) ?? null,
     }))
-    .sort((x, y) => (x.theirs ?? x.ours ?? 0) - (y.theirs ?? y.ours ?? 0));
+    .sort((x, y) => (x.theirs?.reached ?? x.ours?.reached ?? 0) - (y.theirs?.reached ?? y.ours?.reached ?? 0));
+  const total = (m: Map<number, { ms: number; damage: number }>) => {
+    const t = [...m.values()].reduce((acc, v) => ({ ms: acc.ms + v.ms, damage: acc.damage + v.damage }), { ms: 0, damage: 0 });
+    return { ...t, dps: t.damage / Math.max(1, t.ms / 1000) };
+  };
+  const ourTotal = total(ours);
+  const theirTotal = total(theirs);
+  const phaseOf = (pd: PhaseDamage | null, t: number) => {
+    const g = (pd?.segments ?? []).findLast((x) => x.startMs <= t);
+    return g ? (phaseRows.find((p) => p.id === g.id)?.name ?? null) : null;
+  };
+  const pctDiff = (us: number, them: number) => (them > 0 ? Math.round((us / them - 1) * 100) : 0);
 
   // ---- damage taken per minute, matched by spell name
   const spells = new Map<string, { name: string; icon?: string; id: number; ours: number; oursHits: number; theirs: number; theirsHits: number }>();
@@ -169,41 +200,113 @@ export default async function ComparePage({
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat label="Damage taken / min" value={fmtNum(ourTotalPm)} sub={`them ${fmtNum(theirTotalPm)} (${theirTotalPm ? Math.round((ourTotalPm / theirTotalPm - 1) * 100) : 0}% ${ourTotalPm >= theirTotalPm ? "more" : "less"})`} />
-        <Stat label="Raid DPS" value={fmtNum(a.raidDps)} sub={`them ${fmtNum(them.raidDps)}`} />
+        <Stat label="Raid DPS" value={fmtNum(ourTotal.dps)} sub={`them ${fmtNum(theirTotal.dps)} (${pctDiff(ourTotal.dps, theirTotal.dps)}%)`} />
         <Stat label="Deaths before wipe" value={blamed.length} sub={`them ${them.deaths.length} in the compared part`} />
         <Stat label="Duration" value={fmtTime(a.durationMs)} sub={`their kill ${fmtTime(them.durationMs)}`} />
       </div>
 
       <section className="panel p-4">
-        <h2 className="h2">Phase timing</h2>
-        <table className="data">
-          <thead>
-            <tr>
-              <th>Phase</th>
-              <th className="num">Our pull reached it at</th>
-              <th className="num">They reached it at</th>
-              <th className="num">Difference</th>
-            </tr>
-          </thead>
-          <tbody>
-            {phaseRows.map((p) => {
-              const diff = p.ours != null && p.theirs != null ? p.ours - p.theirs : null;
-              return (
-                <tr key={p.id}>
-                  <td>
-                    {p.name}
-                    {p.intermission && <span className="ml-2 text-xs text-muted">intermission</span>}
-                  </td>
-                  <td className="num">{p.ours != null ? fmtTime(p.ours) : <span className="text-muted">not reached</span>}</td>
-                  <td className="num">{p.theirs != null ? fmtTime(p.theirs) : "—"}</td>
-                  <td className={`num ${diff == null ? "text-muted" : diff > 5000 ? "text-bad" : diff < -5000 ? "text-good" : ""}`}>
-                    {diff == null ? "—" : `${diff > 0 ? "+" : diff < 0 ? "−" : ""}${fmtTime(Math.abs(diff))} ${diff > 0 ? "slower" : diff < 0 ? "faster" : ""}`}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <h2 className="h2">Phases: timing, damage and DPS</h2>
+        <div className="overflow-x-auto">
+          <table className="data">
+            <thead>
+              <tr>
+                <th rowSpan={2} className="align-bottom">Phase</th>
+                <th colSpan={3} className="text-center">Reached at</th>
+                <th colSpan={2} className="text-center">Time in phase</th>
+                <th colSpan={3} className="text-center">Raid DPS</th>
+                <th colSpan={2} className="text-center">Damage done</th>
+              </tr>
+              <tr>
+                <th className="num">Us</th>
+                <th className="num">Them</th>
+                <th className="num">Diff</th>
+                <th className="num">Us</th>
+                <th className="num">Them</th>
+                <th className="num">Us</th>
+                <th className="num">Them</th>
+                <th className="num">Diff</th>
+                <th className="num">Us</th>
+                <th className="num">Them</th>
+              </tr>
+            </thead>
+            <tbody>
+              {phaseRows.map((p) => {
+                const diff = p.ours && p.theirs ? p.ours.reached - p.theirs.reached : null;
+                const ourDps = p.ours ? p.ours.damage / Math.max(1, p.ours.ms / 1000) : null;
+                const theirDps = p.theirs ? p.theirs.damage / Math.max(1, p.theirs.ms / 1000) : null;
+                const dd = ourDps != null && theirDps != null ? pctDiff(ourDps, theirDps) : null;
+                return (
+                  <tr key={p.id}>
+                    <td>
+                      {p.name}
+                      {p.intermission && <span className="ml-2 text-xs text-muted">intermission</span>}
+                    </td>
+                    <td className="num">{p.ours ? fmtTime(p.ours.reached) : <span className="text-muted">not reached</span>}</td>
+                    <td className="num">{p.theirs ? fmtTime(p.theirs.reached) : "—"}</td>
+                    <td className={`num ${diff == null ? "text-muted" : diff > 5000 ? "text-bad" : diff < -5000 ? "text-good" : ""}`}>
+                      {diff == null ? "—" : `${diff > 0 ? "+" : diff < 0 ? "−" : ""}${fmtTime(Math.abs(diff))}`}
+                    </td>
+                    <td className="num">{p.ours ? fmtTime(p.ours.ms) : "—"}</td>
+                    <td className="num">{p.theirs ? fmtTime(p.theirs.ms) : "—"}</td>
+                    <td className="num">{ourDps != null ? fmtNum(ourDps) : "—"}</td>
+                    <td className="num">{theirDps != null ? fmtNum(theirDps) : "—"}</td>
+                    <td className={`num ${dd == null ? "text-muted" : dd <= -5 ? "text-bad" : dd >= 5 ? "text-good" : ""}`}>
+                      {dd == null ? "—" : `${dd > 0 ? "+" : ""}${dd}%`}
+                    </td>
+                    <td className="num">{p.ours ? fmtNum(p.ours.damage) : "—"}</td>
+                    <td className="num">{p.theirs ? fmtNum(p.theirs.damage) : "—"}</td>
+                  </tr>
+                );
+              })}
+              <tr className="font-semibold">
+                <td>Total{them.windowMs < them.durationMs ? " (compared part)" : ""}</td>
+                <td className="num" colSpan={3} />
+                <td className="num">{fmtTime(ourTotal.ms)}</td>
+                <td className="num">{fmtTime(theirTotal.ms)}</td>
+                <td className="num">{fmtNum(ourTotal.dps)}</td>
+                <td className="num">{fmtNum(theirTotal.dps)}</td>
+                <td className={`num ${pctDiff(ourTotal.dps, theirTotal.dps) <= -5 ? "text-bad" : pctDiff(ourTotal.dps, theirTotal.dps) >= 5 ? "text-good" : ""}`}>
+                  {pctDiff(ourTotal.dps, theirTotal.dps) > 0 ? "+" : ""}
+                  {pctDiff(ourTotal.dps, theirTotal.dps)}%
+                </td>
+                <td className="num">{fmtNum(ourTotal.damage)}</td>
+                <td className="num">{fmtNum(theirTotal.damage)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-2 text-xs text-muted">Damage done to everything (boss and adds), by the whole raid including pets.</p>
+      </section>
+
+      <section className="panel p-4">
+        <h2 className="h2">Bloodlust / Heroism / Time Warp</h2>
+        <div className="grid gap-4 md:grid-cols-2">
+          {[
+            { label: "Us", pd: ourPD },
+            { label: `Them (${c.guildName})`, pd: theirPD },
+          ].map(({ label, pd }) => (
+            <div key={label}>
+              <div className="mb-1 text-xs text-muted uppercase">{label}</div>
+              {!pd?.lust.length ? (
+                <p className="text-sm text-muted">No Bloodlust cast{label === "Us" ? " in this pull" : " in the compared part"}.</p>
+              ) : (
+                <ul className="space-y-1 text-sm">
+                  {pd.lust.map((l, i) => (
+                    <li key={i} className="flex flex-wrap items-baseline gap-x-2">
+                      <span className="w-12 font-semibold tabular-nums text-accent">{fmtTime(l.t)}</span>
+                      <span>{l.spell}</span>
+                      <span className="text-muted">
+                        by <span style={{ color: classColor(l.className) }}>{l.caster}</span>
+                        {phaseOf(pd, l.t) ? ` · ${phaseOf(pd, l.t)}` : ""}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="panel p-4">

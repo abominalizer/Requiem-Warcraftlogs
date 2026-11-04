@@ -1101,3 +1101,69 @@ export async function fetchForeignKill(
     raidDps: dmg / Math.max(1, windowMs / 1000),
   };
 }
+
+// ---------------------------------------------------------------- per-phase damage + Bloodlust (for the kill comparison)
+
+const LUST = /^(bloodlust|heroism|time warp|primal rage|fury of the aspects|harrier's cry|ancient hysteria|netherwinds|drums of .*)$/i;
+
+export interface PhaseDamage {
+  /** one entry per phase segment, in order (a phase that comes back appears again) */
+  segments: { id: number; startMs: number; endMs: number; damage: number }[];
+  lust: { t: number; spell: string; caster: string; className: string }[];
+}
+
+/**
+ * Raid damage done in each phase segment and Bloodlust-type casts, for any guild's fight, in one request.
+ * `segments` are relative to the fight start; `untilMs` cuts the fight (for the comparison window).
+ */
+export async function fetchPhaseDamage(
+  code: string,
+  fightId: number,
+  untilMs: number | null,
+  opts: { anyGuild?: boolean } = {},
+): Promise<PhaseDamage> {
+  const raw = await fetchRawReport(code, opts);
+  const rf = raw.fights.find((f) => f.id === fightId);
+  if (!rf) throw new WclError(`Fight ${fightId} not found in report ${code}.`);
+  const fight = normalizeFight(rf);
+  const end = untilMs != null ? Math.min(fight.endTime, fight.startTime + untilMs) : fight.endTime;
+  const tr = [...fight.phaseTransitions].sort((a, b) => a.startTime - b.startTime).filter((p) => p.startTime < end);
+  const segs = (tr.length ? tr : [{ id: fight.lastPhase ?? 1, startTime: fight.startTime }]).map((p, i, arr) => ({
+    id: p.id,
+    s: Math.max(fight.startTime, p.startTime),
+    e: i + 1 < arr.length ? arr[i + 1].startTime : end,
+  }));
+
+  const lustIds = raw.masterData.abilities.filter((a) => LUST.test(a.name)).map((a) => a.gameID);
+  const aliases = segs.map((g, i) => `s${i}: table(fightIDs:[${fightId}], dataType:DamageDone, startTime:${g.s}, endTime:${g.e})`).join("\n");
+  const lustQ = lustIds.length
+    ? `lust: events(fightIDs:[${fightId}], dataType:Casts, startTime:${fight.startTime}, endTime:${end}, limit:200, filterExpression:"ability.id in (${lustIds.join(",")})"){ data }`
+    : "";
+  const d = await gql<{ reportData: { report: Record<string, any> } }>(
+    `query($code:String!){ reportData{ report(code:$code){ ${aliases} ${lustQ} } } }`,
+    { code },
+    pullTtl(raw),
+  );
+  const rep = d.reportData.report;
+  const actors = new Map(raw.masterData.actors.map((a) => [a.id, a]));
+  const names = new Map(raw.masterData.abilities.map((a) => [a.gameID, a.name]));
+  return {
+    segments: segs.map((g, i) => ({
+      id: g.id,
+      startMs: g.s - fight.startTime,
+      endMs: g.e - fight.startTime,
+      damage: tableEntries(rep[`s${i}`]).reduce((sum, x) => sum + (x.total ?? 0), 0),
+    })),
+    lust: ((rep.lust?.data ?? []) as RawEvent[])
+      .filter((e) => e.type === "cast")
+      .map((e) => {
+        const a = actors.get(e.sourceID as number);
+        return {
+          t: e.timestamp - fight.startTime,
+          spell: names.get(e.abilityGameID as number) ?? "Bloodlust",
+          caster: a?.name ?? "?",
+          className: a?.subType ?? "",
+        };
+      }),
+  };
+}
