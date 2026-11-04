@@ -31,6 +31,14 @@ Everything about a single pull:
 - **Players**: DPS, HPS, avoidable hits, interrupts and time of death for every player.
 - **Damage taken by ability**: every spell that hit the raid, with hits, players hit and damage. Click a spell to see who got hit.
 
+## Compare with a kill
+
+From any pull, compare against a kill by a guild close to our world rank (same region, refreshed weekly; guilds with private logs are skipped). Their kill is cut to the phases our pull reached so both sides cover the same part of the fight:
+
+- **Phase timing**: when each phase started for us and for them.
+- **Damage taken per minute, by spell**: sorted by where we take the most extra damage; spells that never hit them stand out.
+- **Deaths**, **raid DPS** and **team makeup** side by side.
+
 ## Combined analysis
 
 Any selection of pulls, analyzed as one:

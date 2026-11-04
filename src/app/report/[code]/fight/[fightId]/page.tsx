@@ -45,6 +45,13 @@ export default async function FightPage({ params }: { params: Promise<{ code: st
           <p className="text-sm text-muted">Encounter ID {fight.encounterId} · Fight {fight.id}</p>
         </div>
         <div className="flex gap-2 text-sm">
+          <Link
+            prefetch={false}
+            className="rounded-lg border border-info/60 px-3 py-1.5 text-info hover:bg-info/10"
+            href={`/report/${code}/fight/${fight.id}/compare`}
+          >
+            Compare with a kill →
+          </Link>
           {idx > 0 && (
             <Link prefetch={false} className="rounded-lg border border-line px-3 py-1.5 hover:border-accent" href={`/report/${code}/fight/${siblings[idx - 1]}`}>
               ← Previous pull

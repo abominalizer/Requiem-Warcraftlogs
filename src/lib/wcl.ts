@@ -280,13 +280,14 @@ type RawReport = {
 /** How long pull data can be cached: forever once the report is finished, briefly while logging live. */
 const pullTtl = (raw: RawReport) => (isFinished(raw.endTime) ? FOREVER : 5 * MINUTE);
 
-async function fetchRawReport(code: string): Promise<RawReport> {
+async function fetchRawReport(code: string, opts: { anyGuild?: boolean } = {}): Promise<RawReport> {
   const d = await gql<{ reportData: { report: RawReport | null } }>(REPORT_QUERY, { code }, (x) =>
     x.reportData.report && isFinished(x.reportData.report.endTime) ? FOREVER : 2 * MINUTE,
   );
   const r = d.reportData.report;
   if (!r) throw new WclError(`Report "${code}" not found (or it is private).`);
-  if (r.guild?.id !== GUILD_ID) throw new WclError(NOT_OUR_LOG);
+  // other guilds' logs are only loaded for the kill comparison
+  if (!opts.anyGuild && r.guild?.id !== GUILD_ID) throw new WclError(NOT_OUR_LOG);
   return r;
 }
 
@@ -849,4 +850,254 @@ export async function fetchNightDefensives(code: string): Promise<NightDefensive
     }
   }
   return { byFight, known: Object.fromEntries([...known].map(([k, v]) => [k, [...v]])), spells };
+}
+
+// ---------------------------------------------------------------- compare with another guild's kill
+
+const WEEK = 7 * 24 * 60 * MINUTE;
+
+export interface KillCandidate {
+  guildId: number;
+  guildName: string;
+  server: string;
+  region: string;
+  worldRank: number | null;
+  killTime: number; // unix ms
+  durationMs: number;
+  deaths: number;
+  comp: { tanks: number; healers: number; melee: number; ranged: number };
+}
+
+export interface KillTargets {
+  ourRank: number | null;
+  /** guilds that killed the boss, closest world rank to ours first */
+  candidates: KillCandidate[];
+  updatedAt: number;
+}
+
+type RankingEntry = {
+  guild: { id: number; name: string } | null;
+  server: { name: string; region: string } | null;
+  report: { code: string; fightID: number } | null;
+  startTime: number;
+  duration: number;
+  deaths?: number;
+  tanks?: number;
+  healers?: number;
+  melee?: number;
+  ranged?: number;
+};
+
+async function killPage(encounterId: number, difficulty: number, region: string, page: number): Promise<RankingEntry[]> {
+  const d = await gql<{ worldData: { encounter: { fightRankings: { rankings?: RankingEntry[] } } | null } }>(
+    `query($e:Int!,$d:Int!,$r:String!,$p:Int!){ worldData{ encounter(id:$e){ fightRankings(difficulty:$d, metric:progress, serverRegion:$r, page:$p) } } }`,
+    { e: encounterId, d: difficulty, r: region, p: page },
+    WEEK,
+  );
+  return d.worldData.encounter?.fightRankings.rankings ?? [];
+}
+
+/**
+ * Guilds of our region that killed this boss, closest to our world progress rank. Kills are listed in kill order,
+ * so the guilds just ahead of us are the ones that killed it last before `before` (our own first kill, or now).
+ * Recomputed at most once a week; where the list ended is remembered so a refresh only reads a page or two.
+ */
+export async function fetchKillTargets(
+  encounterId: number,
+  difficulty: number,
+  zoneId: number,
+  region: string,
+  before: number | null,
+): Promise<KillTargets> {
+  const cacheKey = `killtargets:v2:${encounterId}:${difficulty}:${region}:${before ?? "now"}`;
+  const cached = await kvGet<KillTargets>(cacheKey);
+  if (cached && Date.now() - cached.updatedAt < WEEK) return cached;
+  const T = before ?? Date.now();
+
+  // the last page whose first kill happened before T
+  const pages = new Map<number, RankingEntry[]>();
+  const page = async (p: number) => {
+    if (!pages.has(p)) pages.set(p, await killPage(encounterId, difficulty, region, p));
+    return pages.get(p)!;
+  };
+  const firstBefore = async (p: number) => {
+    const r = await page(p);
+    return r.length > 0 && r[0].startTime <= T;
+  };
+  const hintKey = `killpages:v1:${encounterId}:${difficulty}:${region}:${before ?? "now"}`;
+  const hint = (await kvGet<number>(hintKey)) ?? 1;
+  let lo: number;
+  if (await firstBefore(hint)) {
+    // walk forward from last week's position (usually a page or two), then search further if needed
+    lo = hint;
+    let hi = hint + 1;
+    let step = 1;
+    while (hi <= 400 && (await firstBefore(hi))) {
+      lo = hi;
+      step *= 2;
+      hi = lo + step;
+    }
+    while (hi - lo > 1) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (await firstBefore(mid)) lo = mid;
+      else hi = mid;
+    }
+  } else {
+    if (!(await firstBefore(1))) return { ourRank: null, candidates: [], updatedAt: Date.now() };
+    lo = 1;
+    let hi = hint;
+    while (hi - lo > 1) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (await firstBefore(mid)) lo = mid;
+      else hi = mid;
+    }
+  }
+  kvPut(hintKey, lo); // no expiry
+  const entries = [...(lo > 1 ? await page(lo - 1) : []), ...(await page(lo))]
+    .filter((r) => r.guild && r.startTime <= T && r.guild.id !== GUILD_ID)
+    .slice(-60);
+
+  // world ranks of those guilds + ours, in one request
+  const ids = [...new Set([GUILD_ID, ...entries.map((r) => r.guild!.id)])];
+  const ranks = await gql<{ guildData: Record<string, { zoneRanking: { progress: { worldRank: { number: number } | null } | null } | null } | null> }>(
+    `query($z:Int!){ guildData{ ${ids.map((id) => `g${id}: guild(id:${id}){ zoneRanking(zoneId:$z){ progress(size:20){ worldRank{ number } } } }`).join(" ")} } }`,
+    { z: zoneId },
+    WEEK,
+  );
+  const rankOf = (id: number) => ranks.guildData[`g${id}`]?.zoneRanking?.progress?.worldRank?.number ?? null;
+  const ourRank = rankOf(GUILD_ID);
+
+  const candidates: KillCandidate[] = entries.map((r) => ({
+    guildId: r.guild!.id,
+    guildName: r.guild!.name,
+    server: r.server?.name ?? "",
+    region: r.server?.region ?? "",
+    worldRank: rankOf(r.guild!.id),
+    killTime: r.startTime,
+    durationMs: r.duration,
+    deaths: r.deaths ?? 0,
+    comp: { tanks: r.tanks ?? 0, healers: r.healers ?? 0, melee: r.melee ?? 0, ranged: r.ranged ?? 0 },
+  }));
+  const dist = (c: KillCandidate) => (c.worldRank == null || ourRank == null ? 1e9 : Math.abs(c.worldRank - ourRank));
+  candidates.sort((a, b) => dist(a) - dist(b) || b.killTime - a.killTime);
+
+  const result: KillTargets = { ourRank, candidates: candidates.slice(0, 10), updatedAt: Date.now() };
+  kvPut(cacheKey, result, WEEK);
+  return result;
+}
+
+/**
+ * The kill rankings hide report links, so find the kill in the guild's own logs from that day.
+ * Returns null if their logs are private or missing.
+ */
+async function findKillLog(c: KillCandidate, encounterId: number, difficulty: number): Promise<{ code: string; fightId: number } | null> {
+  const d = await gql<{
+    reportData: { reports: { data: { code: string; startTime: number; fights: { id: number; encounterID: number; difficulty: number | null; kill: boolean | null; startTime: number }[] | null }[] } };
+  }>(
+    `query($g:Int!,$s:Float!,$e:Float!){ reportData{ reports(guildID:$g, startTime:$s, endTime:$e, limit:10){
+      data{ code startTime fights(killType: Kills){ id encounterID difficulty kill startTime } } } } }`,
+    { g: c.guildId, s: c.killTime - 12 * 60 * MINUTE, e: c.killTime + 60 * MINUTE },
+    FOREVER,
+  );
+  let best: { code: string; fightId: number; off: number } | null = null;
+  for (const r of d.reportData.reports.data) {
+    for (const f of r.fights ?? []) {
+      if (f.encounterID !== encounterId || (f.difficulty ?? 0) !== difficulty || !f.kill) continue;
+      const off = Math.abs(r.startTime + f.startTime - c.killTime);
+      if (!best || off < best.off) best = { code: r.code, fightId: f.id, off };
+    }
+  }
+  return best && best.off < 30 * MINUTE ? { code: best.code, fightId: best.fightId } : null;
+}
+
+export interface ForeignKill {
+  candidate: KillCandidate;
+  code: string;
+  fightId: number;
+  durationMs: number;
+  /** compared part of their kill: from the pull to the end of the phase our pull reached */
+  windowMs: number;
+  phases: { id: number; name: string; isIntermission: boolean; startMs: number }[];
+  damageTaken: { id: number; name: string; icon?: string; total: number; hits: number }[];
+  deaths: { t: number; player: string; className: string; ability: string | null }[];
+  raidDps: number;
+}
+
+/**
+ * Another guild's kill, cut to the phases our pull reached (`ourLastPhase`), for a fair comparison.
+ * Returns null when their log can't be found (private logs).
+ */
+export async function fetchForeignKill(
+  candidate: KillCandidate,
+  encounterId: number,
+  difficulty: number,
+  ourLastPhase: number | null,
+): Promise<ForeignKill | null> {
+  const log = await findKillLog(candidate, encounterId, difficulty);
+  if (!log) return null;
+  let raw: RawReport;
+  try {
+    raw = await fetchRawReport(log.code, { anyGuild: true });
+  } catch {
+    return null;
+  }
+  const rf = raw.fights.find((f) => f.id === log.fightId);
+  if (!rf) throw new WclError("Their kill isn't in their report any more.");
+  const fight = normalizeFight(rf);
+  const meta = raw.phases?.find((p) => p.encounterID === fight.encounterId)?.phases ?? [];
+  const tr = [...fight.phaseTransitions].sort((a, b) => a.startTime - b.startTime);
+  const phases = tr.map((p) => ({
+    id: p.id,
+    name: meta.find((m) => m.id === p.id)?.name ?? `Phase ${p.id}`,
+    isIntermission: meta.find((m) => m.id === p.id)?.isIntermission ?? false,
+    startMs: p.startTime - fight.startTime,
+  }));
+
+  // window: up to the start of the first phase after the one our pull ended in
+  let end = fight.endTime;
+  if (ourLastPhase != null) {
+    const idx = tr.findIndex((p) => p.id === ourLastPhase);
+    if (idx >= 0 && idx + 1 < tr.length) end = tr[idx + 1].startTime;
+  }
+  const d = await gql<{ reportData: { report: { dd: any; dt: any; deaths: { data: RawEvent[] } } } }>(
+    `query($code:String!,$f:[Int]!,$s:Float!,$e:Float!){ reportData{ report(code:$code){
+      dd: table(fightIDs:$f, dataType:DamageDone, startTime:$s, endTime:$e)
+      dt: table(fightIDs:$f, dataType:DamageTaken, viewBy:Ability, startTime:$s, endTime:$e)
+      deaths: events(fightIDs:$f, dataType:Deaths, startTime:$s, endTime:$e, limit:1000){ data }
+    }}}`,
+    { code: log.code, f: [fight.id], s: fight.startTime, e: end },
+    FOREVER,
+  );
+  const rep = d.reportData.report;
+  const windowMs = end - fight.startTime;
+  const actors = new Map(raw.masterData.actors.map((a) => [a.id, a]));
+  const names = new Map(raw.masterData.abilities.map((a) => [a.gameID, a.name]));
+
+  const damageTaken: ForeignKill["damageTaken"] = [];
+  for (const a of tableEntries(rep.dt)) {
+    const sources: { type?: string }[] = a.sources ?? [];
+    const hostile =
+      a.actorType === "Boss" || a.actorType === "NPC" || (sources.length > 0 && sources.every((x) => x.type === "Boss" || x.type === "NPC"));
+    if (!hostile || !a.total) continue;
+    damageTaken.push({ id: a.guid, name: a.name, icon: a.abilityIcon, total: a.total, hits: (a.hitCount ?? 0) + (a.tickCount ?? 0) });
+  }
+  const deaths = (rep.deaths?.data ?? [])
+    .filter((e) => e.type === "death" && actors.get(e.targetID as number)?.type === "Player")
+    .map((e) => {
+      const a = actors.get(e.targetID as number)!;
+      const k = e.killingAbilityGameID as number;
+      return { t: e.timestamp - fight.startTime, player: a.name, className: a.subType, ability: k ? (names.get(k) ?? null) : null };
+    });
+  const dmg = tableEntries(rep.dd).reduce((s, x) => s + (x.total ?? 0), 0);
+  return {
+    candidate,
+    code: log.code,
+    fightId: log.fightId,
+    durationMs: fight.endTime - fight.startTime,
+    windowMs,
+    phases,
+    damageTaken,
+    deaths,
+    raidDps: dmg / Math.max(1, windowMs / 1000),
+  };
 }
