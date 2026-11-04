@@ -153,8 +153,8 @@ export default async function FightPage({ params }: { params: Promise<{ code: st
                   </td>
                   <td className={`num ${p.avoidableHits ? "text-bad" : "text-muted"}`}>{p.avoidableHits || "—"}</td>
                   <td className="num">{p.interrupts || <span className="text-muted">—</span>}</td>
-                  <td className={`num ${p.death && !p.death.inWipe ? "text-bad" : "text-muted"}`}>
-                    {p.death ? fmtTime(p.death.t) : "—"}
+                  <td className={`num ${p.deaths.some((x) => !x.inWipe) ? "text-bad" : "text-muted"}`}>
+                    {p.deaths.length ? p.deaths.map((x) => fmtTime(x.t)).join(", ") : "—"}
                   </td>
                 </tr>
               ))}

@@ -29,7 +29,8 @@ export interface PlayerStats {
   dps: number;
   healing: number;
   hps: number;
-  death: DeathView | null;
+  /** All of this player's deaths in the pull, in order (more than one after a battle res). */
+  deaths: DeathView[];
   avoidableHits: number;
   avoidableDamage: number;
   interrupts: number;
@@ -136,7 +137,8 @@ export function analyzeFight(d: FightDetail): FightAnalysis {
       },
     ];
   });
-  const deathOf = new Map(deaths.map((x) => [x.player.id, x]));
+  const deathsOf = new Map<number, DeathView[]>();
+  for (const x of deaths) deathsOf.set(x.player.id, [...(deathsOf.get(x.player.id) ?? []), x]);
 
   // ---- players
   const sum = (arr: { playerId: number; total: number }[]) => new Map(arr.map((x) => [x.playerId, x.total]));
@@ -158,14 +160,14 @@ export function analyzeFight(d: FightDetail): FightAnalysis {
         avoidableDamage += pp.total;
       }
     }
-    const death = deathOf.get(p.id) ?? null;
+    const playerDeaths = deathsOf.get(p.id) ?? [];
     return {
       player: p,
       damage: dmg.get(p.id) ?? 0,
       dps: (dmg.get(p.id) ?? 0) / secs,
       healing: heal.get(p.id) ?? 0,
       hps: (heal.get(p.id) ?? 0) / secs,
-      death,
+      deaths: playerDeaths,
       avoidableHits,
       avoidableDamage,
       interrupts: kicks.get(p.id) ?? 0,
@@ -245,7 +247,7 @@ function buildInsights(
   }
 
   // Under-performing DPS (ignoring people who died)
-  const alive = players.filter((p) => p.player.role === "dps" && (!p.death || p.death.inWipe));
+  const alive = players.filter((p) => p.player.role === "dps" && p.deaths.every((x) => x.inWipe));
   if (alive.length >= 4) {
     const sorted = alive.map((p) => p.dps).sort((a, b) => a - b);
     const median = sorted[Math.floor(sorted.length / 2)];
@@ -295,8 +297,8 @@ export function analyzeProgression(pulls: FightAnalysis[]): ProgressionAnalysis 
         dpsSum: 0,
       };
       e.pulls++;
-      if (s.death && !s.death.inWipe) e.deaths++;
-      if (s.death?.first) e.firstDeaths++;
+      e.deaths += s.deaths.filter((x) => !x.inWipe).length;
+      if (s.deaths.some((x) => x.first)) e.firstDeaths++;
       e.avoidableHits += s.avoidableHits;
       e.interrupts += s.interrupts;
       e.dpsSum += s.dps;
