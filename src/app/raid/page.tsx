@@ -8,6 +8,9 @@ import { fetchGuildHome, fetchRaidSpells } from "@/lib/wcl";
 
 export const metadata = { title: "Raid · Requiem Logs" };
 
+// Always render on request: the page reads live data (and must never be pre-built at deploy time).
+export const dynamic = "force-dynamic";
+
 export default async function RaidPage() {
   let home: GuildHome;
   let bosses: RaidBoss[];
