@@ -131,3 +131,14 @@ export interface GuildHome {
   reports: GuildReportSummary[];
   zone: { id: number; name: string; encounters: { id: number; name: string }[] } | null;
 }
+
+/** Damage taken from enemies, summed over a set of pulls. */
+export interface DamageTakenSummary {
+  abilities: { ability: Ability; total: number; hits: number }[];
+  byPlayer: { playerId: number; total: number; abilities: Record<number, number> }[];
+}
+
+export interface MultiPull {
+  details: FightDetail[];
+  damageTaken: DamageTakenSummary;
+}

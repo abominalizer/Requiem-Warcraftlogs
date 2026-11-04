@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { AbilityName, Breadcrumbs, ErrorBox, PlayerName, Score, Stat } from "@/components/ui";
 import { analyzeFight, analyzeProgression, type ProgressionAnalysis } from "@/lib/analysis";
-import { getFights, getReport } from "@/lib/data";
+import { getMultiPull, getReport } from "@/lib/data";
 import { diffName, fmtNum, fmtTime, progressColor } from "@/lib/format";
 import type { ReportSummary } from "@/lib/types";
 
@@ -22,7 +22,7 @@ export default async function BossPage({
       (f) => f.encounterId === Number(encounterId) && (!difficulty || String(f.difficulty) === difficulty),
     );
     if (!fights.length) throw new Error("No pulls for this boss in the report.");
-    const details = await getFights(code, fights.map((f) => f.id));
+    const { details } = await getMultiPull(code, fights.map((f) => f.id));
     prog = analyzeProgression(details.map(analyzeFight));
   } catch (e) {
     return <ErrorBox message={(e as Error).message} />;

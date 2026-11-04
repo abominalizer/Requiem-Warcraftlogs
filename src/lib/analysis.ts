@@ -359,25 +359,3 @@ export function analyzeProgression(pulls: FightAnalysis[]): ProgressionAnalysis 
   };
 }
 
-/**
- * Pick avoidable abilities from damage-taken totals summed over several pulls
- * (used by the progression loader, which can't afford every damage event).
- */
-export function pickAvoidable(
-  encounterId: number,
-  abilities: { id: number; hostile: boolean; hits: number; targets: string[] }[],
-  nonTankNames: Set<string>,
-): Record<number, "configured" | "heuristic"> {
-  const cfg = ENCOUNTERS[encounterId] ?? {};
-  const ignored = new Set([...(cfg.ignore ?? []), ...GLOBAL_IGNORE]);
-  const out: Record<number, "configured" | "heuristic"> = {};
-  for (const id of cfg.avoidable ?? []) out[id] = "configured";
-  if (nonTankNames.size < 5) return out;
-  for (const a of abilities) {
-    if (out[a.id] || ignored.has(a.id) || !a.hostile) continue;
-    const hitNonTanks = a.targets.filter((n) => nonTankNames.has(n)).length;
-    const share = hitNonTanks / nonTankNames.size;
-    if (hitNonTanks > 0 && share <= 0.4 && a.hits >= 3) out[a.id] = "heuristic";
-  }
-  return out;
-}

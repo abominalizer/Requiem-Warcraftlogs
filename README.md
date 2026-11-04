@@ -5,6 +5,7 @@ The site only accepts reports from the guild set in `src/config/guild.ts` (or th
 
 - **Report view**: every boss pull, grouped by boss and difficulty, with progress bars
 - **Pull view**: "what went wrong" insights, a death timeline with phases, the killing blow and last hits for each death, a per-player table (score, DPS, HPS, avoidable hits, interrupts), and damage taken by ability
+- **Combined analysis**: tick any pulls on a raid night (across bosses) to see deaths by player × spell, damage taken by player × spell, damage taken by spell, and a player summary
 - **Progression view**: all pulls on one boss: progress chart, what kills you, avoidable damage, and a per-player execution ranking
 - **Home page**: the guild's current raid progression per boss and recent raid nights
 
