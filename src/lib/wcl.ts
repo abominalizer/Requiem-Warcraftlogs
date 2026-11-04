@@ -510,7 +510,11 @@ async function fetchEventsPerFight(code: string, fights: Fight[], type: string, 
   return out;
 }
 
-export async function fetchMultiPull(code: string, fightIds: number[]): Promise<MultiPull> {
+export async function fetchMultiPull(
+  code: string,
+  fightIds: number[],
+  opts: { damageTaken?: boolean } = {},
+): Promise<MultiPull> {
   const raw = await fetchRawReport(code);
   const rfs = fightIds.map((id) => {
     const f = raw.fights.find((x) => x.id === id);
@@ -528,8 +532,7 @@ export async function fetchMultiPull(code: string, fightIds: number[]): Promise<
   const batch = `query($code:String!,$f:[Int]!,$s:Float!,$e:Float!){
     reportData{ report(code:$code){
       pd: playerDetails(fightIDs:$f, startTime:$s, endTime:$e)
-      dt: table(fightIDs:$f, dataType:DamageTaken, viewBy:Ability, startTime:$s, endTime:$e)
-      dtt: table(fightIDs:$f, dataType:DamageTaken, viewBy:Source, startTime:$s, endTime:$e)
+      ${opts.damageTaken ? "dt: table(fightIDs:$f, dataType:DamageTaken, viewBy:Ability, startTime:$s, endTime:$e)" : ""}
       deaths: events(fightIDs:$f, dataType:Deaths, startTime:$s, endTime:$e, limit:10000){ data nextPageTimestamp }
       ints: events(fightIDs:$f, dataType:Interrupts, startTime:$s, endTime:$e, limit:10000){ data nextPageTimestamp }
       ${ddAliases}
@@ -570,35 +573,9 @@ export async function fetchMultiPull(code: string, fightIds: number[]): Promise<
   for (const a of raw.masterData.abilities) abilities[a.gameID] = { id: a.gameID, name: a.name, icon: a.icon };
   const ab = (id: number, name?: string, icon?: string): Ability => abilities[id] ?? { id, name: name ?? `Spell ${id}`, icon };
 
-  // Damage taken summed over the selected pulls, from enemies only (not self-damage, trinkets, friendly fire).
-  const hostile = new Set<number>();
-  const byAbility = new Map<number, DamageTakenSummary["abilities"][number]>();
-  for (const a of tableEntries(rep.dt)) {
-    const sources: { type?: string }[] = a.sources ?? [];
-    const isHostile =
-      a.actorType === "Boss" || a.actorType === "NPC" || (sources.length > 0 && sources.every((x) => x.type === "Boss" || x.type === "NPC"));
-    if (!isHostile || !a.total) continue;
-    hostile.add(a.guid);
-    const cur = byAbility.get(a.guid) ?? { ability: ab(a.guid, a.name, a.abilityIcon), total: 0, hits: 0 };
-    cur.total += a.total;
-    cur.hits += (a.hitCount ?? 0) + (a.tickCount ?? 0);
-    byAbility.set(a.guid, cur);
-  }
-  // For damage taken, "viewBy: Source" lists each player who took damage, with the abilities that hit them.
-  const rosterById = new Map(roster.map((p) => [p.id, p]));
-  const byPlayer: DamageTakenSummary["byPlayer"] = [];
-  for (const p of tableEntries(rep.dtt)) {
-    const pl = rosterById.get(p.id);
-    if (!pl) continue;
-    const per: Record<number, number> = {};
-    let total = 0;
-    for (const a of p.abilities ?? []) {
-      if (!hostile.has(a.guid)) continue;
-      per[a.guid] = (per[a.guid] ?? 0) + (a.total ?? 0);
-      total += a.total ?? 0;
-    }
-    byPlayer.push({ playerId: pl.id, total, abilities: per });
-  }
+  const damageTaken = opts.damageTaken
+    ? await fetchDamageTakenSummary(code, fightIds, s, e, ttl, tableEntries(rep.dt), roster, ab)
+    : { abilities: [], byPlayer: [] };
 
   // Avoidable = what you configured per boss in src/config/encounters.ts. Fetch only those hits.
   const avoidableFor = (encounterId: number): Record<number, "configured"> =>
@@ -660,6 +637,62 @@ export async function fetchMultiPull(code: string, fightIds: number[]): Promise<
 
   return {
     details,
-    damageTaken: { abilities: [...byAbility.values()].sort((a, b) => b.total - a.total), byPlayer },
+    damageTaken,
   };
+}
+
+/**
+ * Damage taken from enemies over a set of pulls, per spell and per player.
+ *
+ * Warcraft Logs' per-player damage-taken summary only lists each player's top 5 spells, so a spell like
+ * Axegrinder showed 0 for half the raid. Instead we ask for one "damage taken by spell" table per player
+ * (all in one request), which lists every spell. Spells sharing a name (several spell IDs) are merged.
+ */
+async function fetchDamageTakenSummary(
+  code: string,
+  fightIds: number[],
+  s: number,
+  e: number,
+  ttl: number,
+  allSpells: any[],
+  roster: Player[],
+  ab: (id: number, name?: string, icon?: string) => Ability,
+): Promise<DamageTakenSummary> {
+  // Which spells come from enemies (not self-damage, trinkets, friendly fire), and one key per spell name.
+  const keyOf = new Map<number, number>(); // spell id -> id of the first spell with that name
+  const byName = new Map<string, number>();
+  const byAbility = new Map<number, DamageTakenSummary["abilities"][number]>();
+  for (const a of allSpells) {
+    const sources: { type?: string }[] = a.sources ?? [];
+    const hostile =
+      a.actorType === "Boss" || a.actorType === "NPC" || (sources.length > 0 && sources.every((x) => x.type === "Boss" || x.type === "NPC"));
+    if (!hostile || !a.total) continue;
+    const key = byName.get(a.name) ?? a.guid;
+    byName.set(a.name, key);
+    keyOf.set(a.guid, key);
+    const cur = byAbility.get(key) ?? { ability: ab(key, a.name, a.abilityIcon), total: 0, hits: 0 };
+    cur.total += a.total;
+    cur.hits += (a.hitCount ?? 0) + (a.tickCount ?? 0);
+    byAbility.set(key, cur);
+  }
+
+  const aliases = roster
+    .map((p) => `p${p.id}: table(fightIDs:$f, dataType:DamageTaken, viewBy:Ability, sourceID:${p.id}, startTime:$s, endTime:$e)`)
+    .join("\n");
+  const q = `query($code:String!,$f:[Int]!,$s:Float!,$e:Float!){ reportData{ report(code:$code){ ${aliases} }}}`;
+  const d = roster.length ? await gql<{ reportData: { report: Record<string, any> } }>(q, { code, f: fightIds, s, e }, ttl) : null;
+
+  const byPlayer: DamageTakenSummary["byPlayer"] = [];
+  for (const p of roster) {
+    const per: Record<number, number> = {};
+    let total = 0;
+    for (const a of tableEntries(d?.reportData.report[`p${p.id}`])) {
+      const key = keyOf.get(a.guid);
+      if (key == null || !a.total) continue;
+      per[key] = (per[key] ?? 0) + a.total;
+      total += a.total;
+    }
+    if (total > 0) byPlayer.push({ playerId: p.id, total, abilities: per });
+  }
+  return { abilities: [...byAbility.values()].sort((a, b) => b.total - a.total), byPlayer };
 }

@@ -16,8 +16,8 @@ export function getFight(code: string, fightId: number): Promise<FightDetail> {
 export const MAX_PULLS = 40;
 
 /** Load several pulls in a handful of batched requests (Cloudflare allows 50 per page view). */
-export async function getMultiPull(code: string, ids: number[]): Promise<MultiPull> {
-  if (!isDemo(code)) return fetchMultiPull(code, ids.slice(0, MAX_PULLS));
+export async function getMultiPull(code: string, ids: number[], opts: { damageTaken?: boolean } = {}): Promise<MultiPull> {
+  if (!isDemo(code)) return fetchMultiPull(code, ids.slice(0, MAX_PULLS), opts);
   const details = ids.map(demoFight);
   const abilities = new Map<number, DamageTakenSummary["abilities"][number]>();
   const players = new Map<number, DamageTakenSummary["byPlayer"][number]>();

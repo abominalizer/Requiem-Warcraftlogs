@@ -46,7 +46,7 @@ export default async function AnalyzePage({
     if (!ids.length) throw new Error("No pulls selected. Go back to the report and tick some pulls.");
     if (ids.length > MAX_PULLS) throw new Error(`Select at most ${MAX_PULLS} pulls at once.`);
     report = await getReport(code);
-    const multi = await getMultiPull(code, ids);
+    const multi = await getMultiPull(code, ids, { damageTaken: true });
     pulls = multi.details.map(analyzeFight);
     prog = analyzeProgression(pulls);
     dt = multi.damageTaken;
