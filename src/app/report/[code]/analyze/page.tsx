@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { DamageTakenMatrix } from "@/components/DamageTakenMatrix";
 import { AbilityName, Breadcrumbs, ErrorBox, PlayerName, Stat } from "@/components/ui";
-import { analyzeFight, analyzeProgression, type FightAnalysis, type ProgressionAnalysis } from "@/lib/analysis";
+import { PhaseBreakdown } from "@/components/PhaseBreakdown";
+import { analyzeFight, analyzeProgression, phaseBreakdown, type FightAnalysis, type ProgressionAnalysis } from "@/lib/analysis";
 import { getMultiPull, getReport, MAX_PULLS } from "@/lib/data";
 import { diffName, fmtNum, fmtTime, progressColor } from "@/lib/format";
 import type { Ability, DamageTakenSummary, Player, ReportSummary } from "@/lib/types";
@@ -227,6 +228,14 @@ export default async function AnalyzePage({
         )}
       </section>
 
+      {/* ---------------- phases */}
+      {(() => {
+        const bossPhases = phaseBreakdown(pulls);
+        return bossPhases.map((b) => (
+          <PhaseBreakdown key={b.encounterId} boss={b} code={code} pullNo={Object.fromEntries(pullNo)} showBossName={bossPhases.length > 1} />
+        ));
+      })()}
+
       {/* ---------------- damage taken */}
       <section className="panel p-4">
         <h2 className="h2">Damage taken by player and spell</h2>
@@ -320,6 +329,9 @@ export default async function AnalyzePage({
                 <th className="num">Deaths before wipe</th>
                 <th className="num">First deaths</th>
                 <th className="num">Avoidable hits</th>
+                <th className="num" title="Deaths before the wipe where the player pressed no defensive (and got no external) while one was off cooldown">
+                  Died pressing nothing
+                </th>
                 <th className="num">Interrupts</th>
                 <th className="num">Avg DPS</th>
               </tr>
@@ -334,6 +346,9 @@ export default async function AnalyzePage({
                   <td className={`num ${p.deaths ? "text-bad" : "text-muted"}`}>{p.deaths}</td>
                   <td className={`num ${p.firstDeaths ? "text-bad" : "text-muted"}`}>{p.firstDeaths}</td>
                   <td className={`num ${p.avoidableHits ? "text-warn" : "text-muted"}`}>{p.avoidableHits}</td>
+                  <td className={`num ${p.readyDeaths ? "font-semibold text-bad" : "text-muted"}`}>
+                    {p.readyDeaths == null ? "—" : p.readyDeaths}
+                  </td>
                   <td className="num">{p.interrupts}</td>
                   <td className="num">{fmtNum(p.avgDps)}</td>
                 </tr>

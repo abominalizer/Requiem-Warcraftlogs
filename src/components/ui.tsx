@@ -152,3 +152,45 @@ export function ErrorBox({ message }: { message: string }) {
     </div>
   );
 }
+
+/** What the player had at the moment of death: ready-but-unused defensives first. */
+export function DefensiveChips({ check }: { check: import("@/lib/analysis").DefensiveCheck | null }) {
+  if (!check) return <span className="text-xs text-muted">—</span>;
+  const unknown = check.spells.filter((s) => s.status === "unknown");
+  return (
+    <div className="flex flex-wrap gap-1 text-[11px] leading-tight">
+      {check.spells
+        .filter((s) => s.status !== "unknown")
+        .map((s) =>
+          s.status === "ready" ? (
+            <span key={s.key} className="rounded bg-bad/20 px-1.5 py-0.5 font-semibold text-bad" title="Used earlier tonight, off cooldown, not pressed">
+              READY: {s.key}
+            </span>
+          ) : s.status === "used" ? (
+            <span key={s.key} className="rounded bg-good/15 px-1.5 py-0.5 text-good" title="Pressed shortly before dying">
+              used {s.key} {s.agoS}s before
+            </span>
+          ) : (
+            <span
+              key={s.key}
+              className="rounded bg-panel-2 px-1.5 py-0.5 text-muted"
+              title={`${s.via ?? s.key} used ${s.agoS}s before dying`}
+            >
+              {s.readyInS == null ? `${s.key} already used this pull` : `${s.key} on CD (${s.readyInS}s left${s.via ? `, ${s.via}` : ""})`}
+            </span>
+          ),
+        )}
+      {check.externals.map((x, i) => (
+        <span key={`x${i}`} className="rounded bg-info/15 px-1.5 py-0.5 text-info" title="External cast on them shortly before dying">
+          got {x.key}
+          {x.from ? ` from ${x.from.name}` : ""} {x.agoS}s before
+        </span>
+      ))}
+      {unknown.length > 0 && (
+        <span className="px-0.5 py-0.5 text-muted/70" title="Never cast tonight: maybe not talented, or no healthstone/potions">
+          not used tonight: {unknown.map((s) => s.key).join(", ")}
+        </span>
+      )}
+    </div>
+  );
+}

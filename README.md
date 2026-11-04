@@ -27,7 +27,7 @@ Everything about a single pull:
 
 - **What went wrong**: who died first and to what, deaths before the wipe, deaths caused by avoidable damage, the avoidable abilities that hit the most people, how interrupts were spread, and DPS players well below the raid median.
 - **Timeline**: the fight's phases, with a marker for every death.
-- **Deaths**: time, player, killing blow and the last hits each player took before dying.
+- **Deaths**: time, player, killing blow, the last hits each player took before dying, and their defensives at that moment: used, on cooldown, or **READY and not pressed**, plus externals they received.
 - **Players**: DPS, HPS, avoidable hits, interrupts and time of death for every player.
 - **Damage taken by ability**: every spell that hit the raid, with hits, players hit and damage. Click a spell to see who got hit.
 
@@ -43,13 +43,18 @@ Any selection of pulls, analyzed as one:
 
 ## Boss progression
 
-All pulls on one boss in a night: a chart of how far each pull got, what kills us, avoidable damage, a ranking of players by deaths, and the first death of every pull.
+All pulls on one boss in a night:
+
+- **Where we wipe**: every phase with how many pulls reached it and when, the wipes that ended there, what killed people in it and who died.
+- **What started the wipe**: the first two deaths of every wipe, ranked by spell and by player.
+- A chart of how far each pull got, what kills us, avoidable damage, a ranking of players by deaths, and the first death of every pull.
 
 ## How to read it
 
 - **Pull colours** show how close we were to a kill, the same way Warcraft Logs colours them: grey (under 25% through the fight), green (25%+), blue (50%+), purple (75%+), orange (90%+) and gold for kills.
 - **Deaths before the wipe** are the ones that matter. Deaths in the last 20 seconds of a wipe, or after half the raid is already dead, are greyed out and not held against anyone.
 - **Avoidable damage** is damage nobody should take (frontals, pools, swirls), as marked per boss on the Raid page. For bosses with nothing marked yet, a single pull also points out damage that looks avoidable, meaning it only hit part of the raid and some players repeatedly. That is marked "possibly avoidable".
+- **Defensives**: a defensive counts as known when the player cast it at least once that night (so talents are handled). At each death it's either used (pressed in the last 10 seconds), on cooldown (pressed earlier that pull; long cooldowns reset each pull), or ready. All potions share one cooldown, and a Healthstone is gone once eaten. "Died pressing nothing" counts deaths where nothing was pressed and no external was received while something was ready.
 - **Damage taken** only counts damage from enemies. Self-damage, trinkets and friendly fire are left out.
 
 Data comes from the Warcraft Logs API. The site is not affiliated with Warcraft Logs or Blizzard Entertainment.

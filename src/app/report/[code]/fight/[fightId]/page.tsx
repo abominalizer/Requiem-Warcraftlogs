@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AbilityName, Bar, Breadcrumbs, ErrorBox, InsightList, PlayerName, Stat, Timeline } from "@/components/ui";
+import { AbilityName, Bar, Breadcrumbs, DefensiveChips, ErrorBox, InsightList, PlayerName, Stat, Timeline } from "@/components/ui";
 import { analyzeFight, type FightAnalysis } from "@/lib/analysis";
 import { getFight, getReport } from "@/lib/data";
 import { classColor, diffName, fmtNum, fmtTime } from "@/lib/format";
@@ -90,7 +90,7 @@ export default async function FightPage({ params }: { params: Promise<{ code: st
                     <th>Time</th>
                     <th>Player</th>
                     <th>Killing blow</th>
-                    <th>Last hits taken</th>
+                    <th>Last hits taken · defensives at death</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -106,14 +106,21 @@ export default async function FightPage({ params }: { params: Promise<{ code: st
                       <td>
                         <AbilityName ability={d.ability} />
                       </td>
-                      <td className="text-xs text-muted">
-                        {d.lastHits.map((h) => `${h.ability.name} ${fmtNum(h.amount)}`).join(" → ") || "—"}
+                      <td>
+                        <div className="text-xs text-muted">
+                          {d.lastHits.map((h) => `${h.ability.name} ${fmtNum(h.amount)}`).join(" → ") || "—"}
+                        </div>
+                        {d.defensives && (
+                          <div className="mt-1">
+                            <DefensiveChips check={d.defensives} />
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              <p className="mt-2 text-xs text-muted">Greyed-out deaths happened during the wipe and aren&apos;t counted against players.</p>
+              <p className="mt-2 text-xs text-muted">Greyed-out deaths happened during the wipe and aren&apos;t counted against players. <b className="text-bad">READY</b> = a defensive they used earlier tonight was off cooldown and not pressed. Long cooldowns reset each pull; cooldowns are base values.</p>
             </div>
           )}
         </section>

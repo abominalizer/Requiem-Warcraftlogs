@@ -1,4 +1,5 @@
 import "server-only";
+import { CLASS_DEFENSIVES, CONSUMABLES, EXTERNALS } from "@/config/defensives";
 import { kvGet, kvPut } from "./kv";
 import type {
   Ability,
@@ -8,6 +9,8 @@ import type {
   Fight,
   FightDetail,
   DamageTakenSummary,
+  DefensiveCast,
+  DefensiveKind,
   GuildHome,
   MultiPull,
   GuildReportSummary,
@@ -761,4 +764,81 @@ export async function fetchRaidSpells(home: GuildHome): Promise<RaidBoss[]> {
       spells: [...spells.values()].sort((a, b) => b.total - a.total),
     };
   });
+}
+
+// ---------------------------------------------------------------- defensives (one request per raid night)
+
+export interface NightDefensives {
+  byFight: Record<number, DefensiveCast[]>;
+  known: Record<number, string[]>;
+  spells: Record<string, { kind: DefensiveKind; cd: number; oncePerPull?: boolean; group?: string }>;
+}
+
+/**
+ * Every cast of a defensive / consumable / external in the night's boss pulls. Spells are found by name in the
+ * report's spell list (see src/config/defensives.ts), then only those casts are downloaded.
+ */
+export async function fetchNightDefensives(code: string): Promise<NightDefensives> {
+  const raw = await fetchRawReport(code);
+  const spells: NightDefensives["spells"] = {};
+  const keyById = new Map<number, string>();
+  const personal = new Map<string, number>(); // lower-case name -> cd
+  for (const list of Object.values(CLASS_DEFENSIVES)) for (const s of list) personal.set(s.name.toLowerCase(), s.cd);
+  const externals = new Set(EXTERNALS.map((n) => n.toLowerCase()));
+
+  const groupById = new Map<number, string>(); // spells that only put a shared cooldown on something (other potions)
+  for (const a of raw.masterData.abilities) {
+    const n = a.name.toLowerCase();
+    const cons = CONSUMABLES.find((c) => c.match.test(a.name));
+    if (cons) {
+      keyById.set(a.gameID, cons.label);
+      spells[cons.label] = { kind: "consumable", cd: cons.cd, oncePerPull: cons.oncePerPull, group: cons.group?.source };
+    } else if (personal.has(n)) {
+      keyById.set(a.gameID, a.name);
+      spells[a.name] = { kind: "personal", cd: personal.get(n)! };
+    } else if (externals.has(n)) {
+      keyById.set(a.gameID, a.name);
+      spells[a.name] = { kind: "external", cd: 0 };
+    }
+  }
+  // e.g. Potion of Recklessness: not a defensive, but it starts the shared potion cooldown
+  for (const c of CONSUMABLES)
+    if (c.group)
+      for (const a of raw.masterData.abilities)
+        if (c.group.test(a.name) && !keyById.has(a.gameID)) groupById.set(a.gameID, c.group.source);
+
+  const fights = raw.fights.map(normalizeFight).filter((f) => f.encounterId > 0);
+  const ids = [...keyById.keys(), ...groupById.keys()];
+  const events =
+    ids.length && fights.length
+      ? await fetchEventsPerFight(code, fights, "Casts", `ability.id in (${ids.join(",")})`, pullTtl(raw))
+      : [];
+
+  const abilityName = new Map(raw.masterData.abilities.map((a) => [a.gameID, a.name]));
+  const actors = new Map(raw.masterData.actors.map((a) => [a.id, a]));
+  const owner = (id: number) => actors.get(id)?.petOwner ?? id;
+  const byFight: NightDefensives["byFight"] = {};
+  const known = new Map<number, Set<string>>();
+  for (const e of events) {
+    if (e.type !== "cast") continue;
+    const id = e.abilityGameID as number;
+    const key = keyById.get(id);
+    const group = key ? spells[key].group : groupById.get(id);
+    if (!key && !group) continue;
+    const cast: DefensiveCast = {
+      t: e.timestamp,
+      sourceId: owner(e.sourceID as number),
+      // self-cast defensives often have no target
+      targetId: (e.targetID as number) > 0 ? (e.targetID as number) : owner(e.sourceID as number),
+      key: key ?? "",
+      group,
+      spell: abilityName.get(id),
+    };
+    (byFight[e.fight as number] ??= []).push(cast);
+    if (key && spells[key].kind !== "external") {
+      if (!known.has(cast.sourceId)) known.set(cast.sourceId, new Set());
+      known.get(cast.sourceId)!.add(key);
+    }
+  }
+  return { byFight, known: Object.fromEntries([...known].map(([k, v]) => [k, [...v]])), spells };
 }

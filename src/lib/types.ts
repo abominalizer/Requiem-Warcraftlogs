@@ -93,6 +93,28 @@ export interface FightDetail {
   knownAvoidable?: Record<number, "configured" | "heuristic">;
   /** Avoidable spell ids for this boss (marked on the Raid page). When set, nothing is guessed. */
   avoidableIds?: number[];
+  /** Defensive casts in this pull + which defensives each player used tonight. */
+  defensives?: PullDefensives;
+}
+
+export type DefensiveKind = "personal" | "consumable" | "external";
+
+export interface DefensiveCast {
+  t: number; // ms, report time
+  sourceId: number;
+  targetId: number;
+  key: string; // spell name, or consumable label
+  /** shared-cooldown group (e.g. any potion) */
+  group?: string;
+  /** the actual spell, when it differs from key (e.g. "Potion of Recklessness") */
+  spell?: string;
+}
+
+export interface PullDefensives {
+  casts: DefensiveCast[];
+  /** playerId -> defensive keys they cast at least once tonight */
+  known: Record<number, string[]>;
+  spells: Record<string, { kind: DefensiveKind; cd: number; oncePerPull?: boolean; group?: string }>;
 }
 
 export interface GuildReport {
