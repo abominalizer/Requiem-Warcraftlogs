@@ -152,6 +152,7 @@ export function Timeline({
 }
 
 export function ErrorBox({ message }: { message: string }) {
+  if (message === "NOT_A_REQUIEM_LOG") return <NiceTry />;
   return (
     <div className="panel border-bad/50 p-6">
       <h2 className="mb-2 font-semibold text-bad">Couldn&apos;t load data</h2>
@@ -257,6 +258,47 @@ export function LastHits({ hits }: { hits: { ability: Ability; amount: number }[
           </span>
         );
       })}
+    </div>
+  );
+}
+
+/** Shown when someone tries to analyze a log that isn't Requiem's. */
+function NiceTry() {
+  return (
+    <div className="flex flex-col items-center py-10 text-center">
+      <style>{`
+        @keyframes nt-wobble { 0%,100% { transform: rotate(-8deg) } 50% { transform: rotate(8deg) } }
+        @keyframes nt-pop { 0% { transform: scale(.6); opacity: 0 } 70% { transform: scale(1.08) } 100% { transform: scale(1); opacity: 1 } }
+      `}</style>
+      <div className="text-8xl select-none" style={{ animation: "nt-wobble 1.2s ease-in-out infinite" }} aria-hidden>
+        🤨
+      </div>
+      <div style={{ animation: "nt-pop .5s ease-out both" }}>
+        <p className="mt-6 text-sm tracking-widest text-muted uppercase">This doesn&apos;t appear to be a Requiem log</p>
+        <h1 className="mt-2 text-5xl font-black tracking-tight sm:text-6xl">
+          Nice try, you <span className="text-accent">dofus</span>.
+        </h1>
+      </div>
+      <div className="panel mt-8 max-w-xl p-5 text-left text-sm">
+        <p className="font-semibold text-bad">Log rejected. Reasons may include:</p>
+        <ul className="mt-2 space-y-1 text-muted">
+          <li>☠ Too many deaths to Melee</li>
+          <li>🪑 Healers were the top DPS</li>
+          <li>🧯 Standing in fire was listed as a raid strategy</li>
+          <li>🔍 We searched for a Requiem raider in it and found none</li>
+        </ul>
+        <p className="mt-3 text-muted">
+          This analyzer only parses <span className="text-accent">greatness</span>. Upload your own logs somewhere else, or apply to Requiem and come back
+          with a real one.
+        </p>
+      </div>
+      <Link
+        prefetch={false}
+        href="/"
+        className="mt-8 rounded-lg bg-accent px-5 py-2 font-semibold text-black hover:brightness-110"
+      >
+        Take me back to the good logs
+      </Link>
     </div>
   );
 }

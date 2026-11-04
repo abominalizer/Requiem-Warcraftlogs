@@ -29,6 +29,9 @@ const TOKEN_URL = "https://www.warcraftlogs.com/oauth/token";
 
 export class WclError extends Error {}
 
+/** Error message for reports from another guild (the error page turns it into the "nice try" page). */
+export const NOT_OUR_LOG = "NOT_A_REQUIEM_LOG";
+
 export function hasCredentials() {
   return Boolean(process.env.WCL_CLIENT_ID && process.env.WCL_CLIENT_SECRET);
 }
@@ -283,7 +286,7 @@ async function fetchRawReport(code: string): Promise<RawReport> {
   );
   const r = d.reportData.report;
   if (!r) throw new WclError(`Report "${code}" not found (or it is private).`);
-  if (r.guild?.id !== GUILD_ID) throw new WclError("This site only analyzes our guild's logs, and this report belongs to someone else.");
+  if (r.guild?.id !== GUILD_ID) throw new WclError(NOT_OUR_LOG);
   return r;
 }
 
