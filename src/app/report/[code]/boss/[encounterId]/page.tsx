@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AbilityName, Breadcrumbs, ErrorBox, PlayerName, Score, Stat } from "@/components/ui";
+import { AbilityName, Breadcrumbs, ErrorBox, PlayerName, Stat } from "@/components/ui";
 import { analyzeFight, analyzeProgression, type ProgressionAnalysis } from "@/lib/analysis";
 import { getMultiPull, getReport } from "@/lib/data";
 import { diffName, fmtNum, fmtTime, progressColor } from "@/lib/format";
@@ -59,7 +59,7 @@ export default async function BossPage({
           {pulls.map((p, i) => {
             const pct = pctOf(p);
             return (
-              <Link
+              <Link prefetch={false}
                 key={p.detail.fight.id}
                 href={`/report/${code}/fight/${p.detail.fight.id}`}
                 className="group relative flex h-full flex-1 flex-col justify-end"
@@ -147,13 +147,12 @@ export default async function BossPage({
 
       <section className="panel p-4">
         <h2 className="h2">Players across all pulls</h2>
-        <p className="mb-2 text-xs text-muted">Sorted by average execution score (lowest first).</p>
+        <p className="mb-2 text-xs text-muted">Sorted by deaths before the wipe.</p>
         <div className="overflow-x-auto">
           <table className="data">
             <thead>
               <tr>
                 <th>Player</th>
-                <th className="num">Avg score</th>
                 <th className="num">Pulls</th>
                 <th className="num">Deaths</th>
                 <th className="num">First deaths</th>
@@ -167,9 +166,6 @@ export default async function BossPage({
                 <tr key={p.player.id}>
                   <td>
                     <PlayerName player={p.player} />
-                  </td>
-                  <td className="num">
-                    <Score value={p.avgScore} />
                   </td>
                   <td className="num">{p.pulls}</td>
                   <td className={`num ${p.deaths ? "text-bad" : "text-muted"}`}>{p.deaths}</td>
@@ -204,7 +200,7 @@ export default async function BossPage({
                 return (
                   <tr key={p.detail.fight.id}>
                     <td>
-                      <Link className="text-info" href={`/report/${code}/fight/${p.detail.fight.id}`}>
+                      <Link prefetch={false} className="text-info" href={`/report/${code}/fight/${p.detail.fight.id}`}>
                         Pull {i + 1}
                       </Link>
                     </td>

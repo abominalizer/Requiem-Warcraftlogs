@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AbilityName, Bar, Breadcrumbs, ErrorBox, InsightList, PlayerName, Score, Stat, Timeline } from "@/components/ui";
+import { AbilityName, Bar, Breadcrumbs, ErrorBox, InsightList, PlayerName, Stat, Timeline } from "@/components/ui";
 import { analyzeFight, type FightAnalysis } from "@/lib/analysis";
 import { getFight, getReport } from "@/lib/data";
 import { classColor, diffName, fmtNum, fmtTime } from "@/lib/format";
@@ -46,12 +46,12 @@ export default async function FightPage({ params }: { params: Promise<{ code: st
         </div>
         <div className="flex gap-2 text-sm">
           {idx > 0 && (
-            <Link className="rounded-lg border border-line px-3 py-1.5 hover:border-accent" href={`/report/${code}/fight/${siblings[idx - 1]}`}>
+            <Link prefetch={false} className="rounded-lg border border-line px-3 py-1.5 hover:border-accent" href={`/report/${code}/fight/${siblings[idx - 1]}`}>
               ← Previous pull
             </Link>
           )}
           {idx < siblings.length - 1 && (
-            <Link className="rounded-lg border border-line px-3 py-1.5 hover:border-accent" href={`/report/${code}/fight/${siblings[idx + 1]}`}>
+            <Link prefetch={false} className="rounded-lg border border-line px-3 py-1.5 hover:border-accent" href={`/report/${code}/fight/${siblings[idx + 1]}`}>
               Next pull →
             </Link>
           )}
@@ -126,7 +126,6 @@ export default async function FightPage({ params }: { params: Promise<{ code: st
             <thead>
               <tr>
                 <th>Player</th>
-                <th title="100 minus penalties for deaths and avoidable damage">Score</th>
                 <th className="w-1/4">DPS</th>
                 <th className="w-1/6">HPS</th>
                 <th className="num">Avoidable hits</th>
@@ -139,9 +138,6 @@ export default async function FightPage({ params }: { params: Promise<{ code: st
                 <tr key={p.player.id}>
                   <td>
                     <PlayerName player={p.player} /> <span className="text-xs text-muted">{p.player.spec}</span>
-                  </td>
-                  <td title={p.scoreNotes.join("\n") || "Clean"}>
-                    <Score value={p.score} />
                   </td>
                   <td>
                     <div className="flex items-center gap-2">

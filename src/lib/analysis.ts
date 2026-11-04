@@ -33,8 +33,6 @@ export interface PlayerStats {
   avoidableHits: number;
   avoidableDamage: number;
   interrupts: number;
-  score: number;
-  scoreNotes: string[];
 }
 
 export interface Insight {
@@ -150,7 +148,6 @@ export function analyzeFight(d: FightDetail): FightAnalysis {
   const players: PlayerStats[] = d.players.map((p) => {
     let avoidableHits = 0;
     let avoidableDamage = 0;
-    let configuredHits = 0;
     for (const a of abilities) {
       if (!a.avoidable) continue;
       // guesses don't count against tanks: they take a lot of targeted damage by design
@@ -159,29 +156,9 @@ export function analyzeFight(d: FightDetail): FightAnalysis {
       if (pp) {
         avoidableHits += pp.hits;
         avoidableDamage += pp.total;
-        if (a.avoidable === "configured") configuredHits += pp.hits;
       }
     }
     const death = deathOf.get(p.id) ?? null;
-    const notes: string[] = [];
-    let score = 100;
-    if (death && !death.inWipe) {
-      const pen = death.first ? 40 : 30;
-      score -= pen;
-      notes.push(`-${pen} died at ${fmtTime(death.t)}${death.first ? " (first death)" : ""}`);
-    }
-    // Hits on abilities you configured as avoidable cost 5 each; heuristic guesses only 1 each.
-    if (configuredHits) {
-      const pen = Math.min(40, configuredHits * 5);
-      score -= pen;
-      notes.push(`-${pen} ${configuredHits} avoidable hit${configuredHits > 1 ? "s" : ""}`);
-    }
-    const guessHits = avoidableHits - configuredHits;
-    if (guessHits) {
-      const pen = Math.min(10, guessHits);
-      score -= pen;
-      notes.push(`-${pen} ${guessHits} possibly-avoidable hit${guessHits > 1 ? "s" : ""}`);
-    }
     return {
       player: p,
       damage: dmg.get(p.id) ?? 0,
@@ -192,8 +169,6 @@ export function analyzeFight(d: FightDetail): FightAnalysis {
       avoidableHits,
       avoidableDamage,
       interrupts: kicks.get(p.id) ?? 0,
-      score: Math.max(0, score),
-      scoreNotes: notes,
     };
   });
 
@@ -297,14 +272,13 @@ export interface ProgressionAnalysis {
     avoidableHits: number;
     interrupts: number;
     avgDps: number;
-    avgScore: number;
   }[];
   deathCauses: { ability: Ability; count: number; first: number }[];
   avoidable: { ability: Ability; hits: number; damage: number; pulls: number; kind: AvoidableKind }[];
 }
 
 export function analyzeProgression(pulls: FightAnalysis[]): ProgressionAnalysis {
-  const players = new Map<number, ProgressionAnalysis["players"][number] & { dpsSum: number; scoreSum: number }>();
+  const players = new Map<number, ProgressionAnalysis["players"][number] & { dpsSum: number }>();
   const causes = new Map<number, { ability: Ability; count: number; first: number }>();
   const avoid = new Map<number, ProgressionAnalysis["avoidable"][number]>();
 
@@ -318,9 +292,7 @@ export function analyzeProgression(pulls: FightAnalysis[]): ProgressionAnalysis 
         avoidableHits: 0,
         interrupts: 0,
         avgDps: 0,
-        avgScore: 0,
         dpsSum: 0,
-        scoreSum: 0,
       };
       e.pulls++;
       if (s.death && !s.death.inWipe) e.deaths++;
@@ -328,7 +300,6 @@ export function analyzeProgression(pulls: FightAnalysis[]): ProgressionAnalysis 
       e.avoidableHits += s.avoidableHits;
       e.interrupts += s.interrupts;
       e.dpsSum += s.dps;
-      e.scoreSum += s.score;
       players.set(s.player.id, e);
     }
     for (const dth of pull.deaths) {
@@ -352,8 +323,8 @@ export function analyzeProgression(pulls: FightAnalysis[]): ProgressionAnalysis 
   return {
     pulls,
     players: [...players.values()]
-      .map(({ dpsSum, scoreSum, ...e }) => ({ ...e, avgDps: dpsSum / e.pulls, avgScore: scoreSum / e.pulls }))
-      .sort((a, b) => a.avgScore - b.avgScore),
+      .map(({ dpsSum, ...e }) => ({ ...e, avgDps: dpsSum / e.pulls }))
+      .sort((a, b) => b.deaths - a.deaths || b.firstDeaths - a.firstDeaths || b.avoidableHits - a.avoidableHits),
     deathCauses: [...causes.values()].sort((a, b) => b.count - a.count),
     avoidable: [...avoid.values()].sort((a, b) => b.hits - a.hits),
   };

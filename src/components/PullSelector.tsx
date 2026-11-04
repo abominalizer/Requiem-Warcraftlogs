@@ -86,7 +86,7 @@ export function PullSelector({ code, groups, maxPulls }: { code: string; groups:
                     </button>
                   </p>
                 </div>
-                <Link
+                <Link prefetch={false}
                   href={`/report/${code}/boss/${g.encounterId}?difficulty=${g.difficulty ?? ""}`}
                   className="rounded-lg border border-accent/60 px-3 py-1.5 text-sm text-accent hover:bg-accent/10"
                 >
@@ -110,7 +110,7 @@ export function PullSelector({ code, groups, maxPulls }: { code: string; groups:
                           className="h-4 w-4 accent-[var(--color-accent)]"
                         />
                       </label>
-                      <Link href={`/report/${code}/fight/${f.id}`} className="flex-1 px-3 py-2">
+                      <Link prefetch={false} href={`/report/${code}/fight/${f.id}`} className="flex-1 px-3 py-2">
                         <div className="flex justify-between text-sm">
                           <span>
                             Pull {f.pullNo}{" "}

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AbilityName, Breadcrumbs, ErrorBox, PlayerName, Score, Stat } from "@/components/ui";
+import { AbilityName, Breadcrumbs, ErrorBox, PlayerName, Stat } from "@/components/ui";
 import { analyzeFight, analyzeProgression, type FightAnalysis, type ProgressionAnalysis } from "@/lib/analysis";
 import { getMultiPull, getReport, MAX_PULLS } from "@/lib/data";
 import { diffName, fmtNum, fmtTime, progressColor } from "@/lib/format";
@@ -127,7 +127,7 @@ export default async function AnalyzePage({
           {pulls.map((p) => {
             const f = p.detail.fight;
             return (
-              <Link
+              <Link prefetch={false}
                 key={f.id}
                 href={`/report/${code}/fight/${f.id}`}
                 className="rounded bg-panel-2 px-2 py-0.5 text-xs hover:brightness-125"
@@ -156,14 +156,14 @@ export default async function AnalyzePage({
             {includeWipe ? (
               <>
                 Including deaths during wipes ·{" "}
-                <Link className="text-info hover:underline" href={selfUrl(false)}>
+                <Link prefetch={false} className="text-info hover:underline" href={selfUrl(false)}>
                   only count deaths before the wipe
                 </Link>
               </>
             ) : (
               <>
                 Deaths before the wipe only ·{" "}
-                <Link className="text-info hover:underline" href={selfUrl(true)}>
+                <Link prefetch={false} className="text-info hover:underline" href={selfUrl(true)}>
                   include deaths during wipes
                 </Link>
               </>
@@ -342,7 +342,6 @@ export default async function AnalyzePage({
             <thead>
               <tr>
                 <th>Player</th>
-                <th className="num">Avg score</th>
                 <th className="num">Pulls</th>
                 <th className="num">Deaths before wipe</th>
                 <th className="num">First deaths</th>
@@ -356,9 +355,6 @@ export default async function AnalyzePage({
                 <tr key={p.player.id}>
                   <td>
                     <PlayerName player={p.player} />
-                  </td>
-                  <td className="num">
-                    <Score value={p.avgScore} />
                   </td>
                   <td className="num">{p.pulls}</td>
                   <td className={`num ${p.deaths ? "text-bad" : "text-muted"}`}>{p.deaths}</td>
@@ -393,7 +389,7 @@ export default async function AnalyzePage({
                 return (
                   <tr key={f.id}>
                     <td>
-                      <Link className="text-info" href={`/report/${code}/fight/${f.id}`}>
+                      <Link prefetch={false} className="text-info" href={`/report/${code}/fight/${f.id}`}>
                         {f.name} #{pullNo.get(f.id)}
                       </Link>
                     </td>

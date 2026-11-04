@@ -13,11 +13,11 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body className="min-h-screen antialiased">
         <header className="border-b border-line bg-panel/80">
           <div className="mx-auto flex max-w-7xl items-center gap-6 px-4 py-3">
-            <Link href="/" className="text-lg font-bold">
+            <Link prefetch={false} href="/" className="text-lg font-bold">
               <span className="text-accent">Requiem</span> Logs
             </Link>
             <nav className="flex gap-4 text-sm text-muted">
-              <Link href="/" className="hover:text-fg">Home</Link>
+              <Link prefetch={false} href="/" className="hover:text-fg">Home</Link>
             </nav>
           </div>
         </header>

@@ -144,7 +144,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
                 return (
                   <li key={b.id}>
                     {b.link ? (
-                      <Link href={b.link} className="block rounded px-1 hover:bg-panel-2/60">
+                      <Link prefetch={false} href={b.link} className="block rounded px-1 hover:bg-panel-2/60">
                         {row}
                       </Link>
                     ) : (
@@ -181,7 +181,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
               <ul className="space-y-2">
                 {raidNights.map((r) => (
                   <li key={r.code}>
-                    <Link href={`/report/${r.code}`} className="block rounded-lg border border-line bg-panel-2 px-3 py-2 hover:border-accent/60">
+                    <Link prefetch={false} href={`/report/${r.code}`} className="block rounded-lg border border-line bg-panel-2 px-3 py-2 hover:border-accent/60">
                       <div className="flex justify-between gap-2 text-sm">
                         <span className="font-medium">{fmtDate(r.startTime)}</span>
                         <span className="text-muted tabular-nums">{fmtHours(r.endTime - r.startTime)}</span>

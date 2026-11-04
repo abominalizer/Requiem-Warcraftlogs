@@ -1,4 +1,5 @@
 import "server-only";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import type {
   Ability,
   AmountEntry,
@@ -28,18 +29,68 @@ export function hasCredentials() {
   return Boolean(process.env.WCL_CLIENT_ID && process.env.WCL_CLIENT_SECRET);
 }
 
+// ---------------------------------------------------------------- caching
+//
+// Two levels: memory (lost whenever Cloudflare recycles the Worker) and Cloudflare KV (shared and
+// persistent). A finished report never changes, so everything about it is kept for 30 days and each
+// pull is downloaded from Warcraft Logs only once.
+
+const MINUTE = 60_000;
+const FOREVER = 30 * 24 * 60 * MINUTE;
+
+type KV = {
+  get(key: string, type: "json"): Promise<unknown>;
+  put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void>;
+};
+
+function cloudflare(): { kv: KV | null; waitUntil: (p: Promise<unknown>) => void } {
+  try {
+    const ctx = getCloudflareContext();
+    const kv = (ctx.env as unknown as { WCL_CACHE?: KV }).WCL_CACHE ?? null;
+    return { kv, waitUntil: (p) => ctx.ctx.waitUntil(p) };
+  } catch {
+    return { kv: null, waitUntil: () => {} }; // not running on Cloudflare (e.g. `npm run dev`)
+  }
+}
+
+async function kvGet<T>(key: string): Promise<T | null> {
+  const { kv } = cloudflare();
+  if (!kv) return null;
+  try {
+    return (await kv.get(key, "json")) as T | null;
+  } catch {
+    return null;
+  }
+}
+
+function kvPut(key: string, value: unknown, ttlMs: number) {
+  const { kv, waitUntil } = cloudflare();
+  if (!kv) return;
+  // don't make the visitor wait for the write; ignore failures (e.g. the free plan's daily write limit)
+  waitUntil(kv.put(key, JSON.stringify(value), { expirationTtl: Math.max(60, Math.round(ttlMs / 1000)) }).catch(() => {}));
+}
+
+async function sha256(text: string) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** A report still being logged (or just finished) may change; anything older is final. */
+const isFinished = (reportEndTime: number) => reportEndTime < Date.now() - 60 * MINUTE;
+
 // ---------------------------------------------------------------- auth + transport
 
 let token: { value: string; expiresAt: number } | null = null;
 
 async function getToken(): Promise<string> {
-  if (token && token.expiresAt > Date.now() + 60_000) return token.value;
+  if (token && token.expiresAt > Date.now() + MINUTE) return token.value;
+  const cached = await kvGet<{ value: string; expiresAt: number }>("wcl-token");
+  if (cached && cached.expiresAt > Date.now() + 60 * MINUTE) return (token = cached).value;
+
   const id = process.env.WCL_CLIENT_ID;
   const secret = process.env.WCL_CLIENT_SECRET;
   if (!id || !secret) {
-    throw new WclError(
-      "Warcraft Logs API credentials are missing. Set WCL_CLIENT_ID and WCL_CLIENT_SECRET in .env.local.",
-    );
+    throw new WclError("Warcraft Logs API credentials are missing (WCL_CLIENT_ID / WCL_CLIENT_SECRET).");
   }
   const res = await fetch(TOKEN_URL, {
     method: "POST",
@@ -53,19 +104,31 @@ async function getToken(): Promise<string> {
   if (!res.ok) throw new WclError(`Warcraft Logs auth failed (${res.status}). Check your client ID/secret.`);
   const json = (await res.json()) as { access_token: string; expires_in: number };
   token = { value: json.access_token, expiresAt: Date.now() + json.expires_in * 1000 };
+  kvPut("wcl-token", token, Math.min(FOREVER, json.expires_in * 1000 - 24 * 60 * MINUTE));
   return token.value;
 }
 
-// Small in-memory cache: finished reports never change, so this saves a lot of API points.
-const cache = new Map<string, { at: number; ttl: number; value: Promise<unknown> }>();
-const MAX_CACHE = 500;
+const memory = new Map<string, { at: number; ttl: number; value: Promise<unknown> }>();
+const MAX_MEMORY = 300;
 
-async function gql<T>(query: string, variables: Record<string, unknown>, ttlMs = 10 * 60_000): Promise<T> {
-  const key = query + JSON.stringify(variables);
-  const hit = cache.get(key);
+/**
+ * Run a GraphQL query, cached in memory and in KV.
+ * `ttl` may depend on the result (e.g. a report is cached for longer once it has finished).
+ */
+async function gql<T>(
+  query: string,
+  variables: Record<string, unknown>,
+  ttl: number | ((data: T) => number) = 10 * MINUTE,
+): Promise<T> {
+  const raw = query + JSON.stringify(variables);
+  const hit = memory.get(raw);
   if (hit && Date.now() - hit.at < hit.ttl) return hit.value as Promise<T>;
 
   const p = (async () => {
+    const key = "q:" + (await sha256(raw));
+    const stored = await kvGet<{ data: T }>(key);
+    if (stored) return { data: stored.data, ttl: typeof ttl === "number" ? ttl : ttl(stored.data) };
+
     if (process.env.WCL_DEBUG) console.log("[wcl] request", query.slice(0, 60).replace(/\s+/g, " "));
     const res = await fetch(API_URL, {
       method: "POST",
@@ -77,13 +140,20 @@ async function gql<T>(query: string, variables: Record<string, unknown>, ttlMs =
     if (!res.ok) throw new WclError(`Warcraft Logs API error ${res.status}`);
     const json = (await res.json()) as { data?: T; errors?: { message: string }[] };
     if (json.errors?.length) throw new WclError(json.errors.map((e) => e.message).join("; "));
-    return json.data as T;
+    const data = json.data as T;
+    const ms = typeof ttl === "number" ? ttl : ttl(data);
+    kvPut(key, { data }, ms);
+    return { data, ttl: ms };
   })();
 
-  cache.set(key, { at: Date.now(), ttl: ttlMs, value: p });
-  p.catch(() => cache.delete(key));
-  if (cache.size > MAX_CACHE) cache.delete(cache.keys().next().value!);
-  return p;
+  const value = p.then((r) => r.data);
+  memory.set(raw, { at: Date.now(), ttl: 10 * MINUTE, value });
+  p.then((r) => {
+    const m = memory.get(raw);
+    if (m) m.ttl = Math.min(r.ttl, 60 * MINUTE);
+  }).catch(() => memory.delete(raw));
+  if (memory.size > MAX_MEMORY) memory.delete(memory.keys().next().value!);
+  return value;
 }
 
 // ---------------------------------------------------------------- guild
@@ -91,11 +161,10 @@ async function gql<T>(query: string, variables: Record<string, unknown>, ttlMs =
 const GUILD_QUERY = `query($id:Int!){
   guildData{ guild(id:$id){ id name faction{ name } server{ name region{ slug } } } }
   reportData{ reports(guildID:$id, limit:25){
-    data{ code title startTime endTime zone{ id name }
+    data{ code title startTime endTime zone{ id name encounters{ id name } }
       fights(killType: Encounters){ encounterID name kill difficulty fightPercentage bossPercentage } }
   }}}`;
 
-const ZONE_QUERY = `query($id:Int!){ worldData{ zone(id:$id){ id name encounters{ id name } } } }`;
 
 export async function fetchGuildHome(): Promise<GuildHome> {
   type R = {
@@ -109,13 +178,13 @@ export async function fetchGuildHome(): Promise<GuildHome> {
           title: string;
           startTime: number;
           endTime: number;
-          zone: { id: number; name: string } | null;
+          zone: { id: number; name: string; encounters: { id: number; name: string }[] } | null;
           fights: { encounterID: number; name: string; kill: boolean | null; difficulty: number | null; fightPercentage: number | null; bossPercentage: number | null }[] | null;
         }[];
       };
     };
   };
-  const d = await gql<R>(GUILD_QUERY, { id: GUILD_ID }, 5 * 60_000);
+  const d = await gql<R>(GUILD_QUERY, { id: GUILD_ID }, 10 * MINUTE);
   const g = d.guildData.guild;
   if (!g) throw new WclError(`Guild ${GUILD_ID} not found on Warcraft Logs.`);
   const reports: GuildReportSummary[] = d.reportData.reports.data.map((r) => ({
@@ -123,7 +192,7 @@ export async function fetchGuildHome(): Promise<GuildHome> {
     title: r.title,
     startTime: r.startTime,
     endTime: r.endTime,
-    zone: r.zone,
+    zone: r.zone ? { id: r.zone.id, name: r.zone.name } : null,
     fights: (r.fights ?? [])
       .filter((f) => f.encounterID > 0)
       .map((f) => ({
@@ -136,16 +205,8 @@ export async function fetchGuildHome(): Promise<GuildHome> {
   }));
 
   // Current raid = zone of the most recent report that has boss pulls.
-  const latestZone = reports.find((r) => r.zone && r.fights.length)?.zone;
-  let zone: GuildHome["zone"] = null;
-  if (latestZone) {
-    const z = await gql<{ worldData: { zone: { id: number; name: string; encounters: { id: number; name: string }[] } | null } }>(
-      ZONE_QUERY,
-      { id: latestZone.id },
-      24 * 60 * 60_000,
-    );
-    zone = z.worldData.zone;
-  }
+  const latest = d.reportData.reports.data.find((r) => r.zone && (r.fights ?? []).some((f) => f.encounterID > 0));
+  const zone: GuildHome["zone"] = latest?.zone ?? null;
   return {
     guild: { id: g.id, name: g.name, faction: g.faction?.name ?? null, server: g.server.name, region: g.server.region.slug },
     reports,
@@ -201,8 +262,13 @@ type RawReport = {
   masterData: { actors: RawActor[]; abilities: { gameID: number; name: string; icon: string }[] };
 };
 
+/** How long pull data can be cached: forever once the report is finished, briefly while logging live. */
+const pullTtl = (raw: RawReport) => (isFinished(raw.endTime) ? FOREVER : 5 * MINUTE);
+
 async function fetchRawReport(code: string): Promise<RawReport> {
-  const d = await gql<{ reportData: { report: RawReport | null } }>(REPORT_QUERY, { code }, 2 * 60_000);
+  const d = await gql<{ reportData: { report: RawReport | null } }>(REPORT_QUERY, { code }, (x) =>
+    x.reportData.report && isFinished(x.reportData.report.endTime) ? FOREVER : 2 * MINUTE,
+  );
   const r = d.reportData.report;
   if (!r) throw new WclError(`Report "${code}" not found (or it is private).`);
   if (r.guild?.id !== GUILD_ID) throw new WclError("This site only analyzes our guild's logs, and this report belongs to someone else.");
@@ -246,33 +312,33 @@ function normalizeFight(f: RawReport["fights"][number]): Fight {
 
 // ---------------------------------------------------------------- fight detail
 
-const FIGHT_TABLES = `query($code:String!,$f:[Int]!,$s:Float!,$e:Float!){
+type Page = { data: RawEvent[]; nextPageTimestamp: number | null };
+
+// One request per pull: tables, roles, deaths, interrupts and the first page of damage taken.
+const FIGHT_QUERY = `query($code:String!,$f:[Int]!,$s:Float!,$e:Float!){
   reportData{ report(code:$code){
     dd: table(fightIDs:$f, dataType:DamageDone, startTime:$s, endTime:$e)
     hd: table(fightIDs:$f, dataType:Healing, startTime:$s, endTime:$e)
-    deaths: events(fightIDs:$f, dataType:Deaths, startTime:$s, endTime:$e, limit:1000){ data }
     pd: playerDetails(fightIDs:$f, startTime:$s, endTime:$e)
-  }}}`;
-
-const EVENTS = (type: string) => `query($code:String!,$f:[Int]!,$s:Float!,$e:Float!){
-  reportData{ report(code:$code){
-    events(fightIDs:$f, dataType:${type}, startTime:$s, endTime:$e, limit:10000){ data nextPageTimestamp }
+    deaths: events(fightIDs:$f, dataType:Deaths, startTime:$s, endTime:$e, limit:10000){ data nextPageTimestamp }
+    ints: events(fightIDs:$f, dataType:Interrupts, startTime:$s, endTime:$e, limit:10000){ data nextPageTimestamp }
+    dt: events(fightIDs:$f, dataType:DamageTaken, startTime:$s, endTime:$e, limit:10000){ data nextPageTimestamp }
   }}}`;
 
 type RawEvent = Record<string, unknown> & { timestamp: number; type: string };
 
-async function fetchAllEvents(code: string, fightId: number, s: number, e: number, type: string) {
-  const out: RawEvent[] = [];
-  let start = s;
-  for (let i = 0; i < 30; i++) {
-    const d = await gql<{
-      reportData: { report: { events: { data: RawEvent[]; nextPageTimestamp: number | null } } };
-    }>(EVENTS(type), { code, f: [fightId], s: start, e }, 60 * 60_000);
-    const ev = d.reportData.report.events;
-    out.push(...(ev.data ?? []));
-    if (!ev.nextPageTimestamp || ev.nextPageTimestamp >= e) break;
-    start = ev.nextPageTimestamp;
-  }
+/** Append the remaining pages of an events query that came back with a nextPageTimestamp. */
+async function withRest(
+  code: string,
+  fightIds: number[],
+  first: Page | undefined,
+  e: number,
+  type: string,
+  ttl: number,
+): Promise<RawEvent[]> {
+  const out = [...(first?.data ?? [])];
+  const next = first?.nextPageTimestamp;
+  if (next && next < e) out.push(...(await fetchEventsMulti(code, fightIds, next, e, type, ttl)));
   return out;
 }
 
@@ -289,10 +355,16 @@ export async function fetchFightDetail(code: string, fightId: number): Promise<F
   const fight = normalizeFight(rf);
   const vars = { code, f: [fightId], s: fight.startTime, e: fight.endTime };
 
-  const [tables, dmgTaken, interrupts] = await Promise.all([
-    gql<{ reportData: { report: { dd: any; hd: any; deaths: any; pd: any } } }>(FIGHT_TABLES, vars, 60 * 60_000),
-    fetchAllEvents(code, fightId, fight.startTime, fight.endTime, "DamageTaken"),
-    fetchAllEvents(code, fightId, fight.startTime, fight.endTime, "Interrupts"),
+  const ttl = pullTtl(raw);
+  const tables = await gql<{ reportData: { report: { dd: any; hd: any; pd: any; deaths: Page; ints: Page; dt: Page } } }>(
+    FIGHT_QUERY,
+    vars,
+    ttl,
+  );
+  const [dmgTaken, interrupts, deathEvents] = await Promise.all([
+    withRest(code, [fightId], tables.reportData.report.dt, fight.endTime, "DamageTaken", ttl),
+    withRest(code, [fightId], tables.reportData.report.ints, fight.endTime, "Interrupts", ttl),
+    withRest(code, [fightId], tables.reportData.report.deaths, fight.endTime, "Deaths", ttl),
   ]);
   const t = tables.reportData.report;
 
@@ -348,7 +420,7 @@ export async function fetchFightDetail(code: string, fightId: number): Promise<F
       overkill: (e.overkill as number) ?? 0,
     }));
 
-  const deaths: DeathRecord[] = ((t.deaths?.data ?? []) as RawEvent[])
+  const deaths: DeathRecord[] = deathEvents
     .filter((d) => d.type === "death" && playerIds.has(d.targetID as number))
     .map((d) => ({
       playerId: d.targetID as number,
@@ -392,7 +464,7 @@ export async function fetchFightDetail(code: string, fightId: number): Promise<F
 //  3. get deaths + interrupts for all pulls in one events request and DPS per pull in one batched request.
 
 
-async function fetchEventsMulti(code: string, fightIds: number[], s: number, e: number, type: string, filter?: string) {
+async function fetchEventsMulti(code: string, fightIds: number[], s: number, e: number, type: string, ttl: number, filter?: string) {
   const q = `query($code:String!,$f:[Int]!,$s:Float!,$e:Float!${filter ? ",$x:String!" : ""}){
     reportData{ report(code:$code){
       events(fightIDs:$f, dataType:${type}, startTime:$s, endTime:$e, limit:10000${filter ? ", filterExpression:$x" : ""}){ data nextPageTimestamp }
@@ -403,7 +475,7 @@ async function fetchEventsMulti(code: string, fightIds: number[], s: number, e: 
     const d = await gql<{ reportData: { report: { events: { data: RawEvent[]; nextPageTimestamp: number | null } } } }>(
       q,
       { code, f: fightIds, s: start, e, ...(filter ? { x: filter } : {}) },
-      60 * 60_000,
+      ttl,
     );
     const ev = d.reportData.report.events;
     out.push(...(ev.data ?? []));
@@ -414,7 +486,7 @@ async function fetchEventsMulti(code: string, fightIds: number[], s: number, e: 
 }
 
 /** Events for many fights at once: one GraphQL request per round, one alias per fight still paging. */
-async function fetchEventsPerFight(code: string, fights: Fight[], type: string, filter: string) {
+async function fetchEventsPerFight(code: string, fights: Fight[], type: string, filter: string, ttl: number) {
   const out: RawEvent[] = [];
   let pending = fights.map((f) => ({ id: f.id, start: f.startTime, end: f.endTime }));
   for (let round = 0; round < 8 && pending.length; round++) {
@@ -425,7 +497,7 @@ async function fetchEventsPerFight(code: string, fights: Fight[], type: string, 
     const d = await gql<{ reportData: { report: Record<string, { data: RawEvent[]; nextPageTimestamp: number | null }> } }>(
       q,
       { code, x: filter },
-      60 * 60_000,
+      ttl,
     );
     const next: typeof pending = [];
     for (const p of pending) {
@@ -458,13 +530,16 @@ export async function fetchMultiPull(code: string, fightIds: number[]): Promise<
       pd: playerDetails(fightIDs:$f, startTime:$s, endTime:$e)
       dt: table(fightIDs:$f, dataType:DamageTaken, viewBy:Ability, startTime:$s, endTime:$e)
       dtt: table(fightIDs:$f, dataType:DamageTaken, viewBy:Source, startTime:$s, endTime:$e)
+      deaths: events(fightIDs:$f, dataType:Deaths, startTime:$s, endTime:$e, limit:10000){ data nextPageTimestamp }
+      ints: events(fightIDs:$f, dataType:Interrupts, startTime:$s, endTime:$e, limit:10000){ data nextPageTimestamp }
       ${ddAliases}
     }}}`;
   const vars = { code, f: fightIds, s, e };
-  const [b, deathEvents, kickEvents] = await Promise.all([
-    gql<{ reportData: { report: Record<string, any> } }>(batch, vars, 60 * 60_000),
-    fetchEventsMulti(code, fightIds, s, e, "Deaths"),
-    fetchEventsMulti(code, fightIds, s, e, "Interrupts"),
+  const ttl = pullTtl(raw);
+  const b = await gql<{ reportData: { report: Record<string, any> } }>(batch, vars, ttl);
+  const [deathEvents, kickEvents] = await Promise.all([
+    withRest(code, fightIds, b.reportData.report.deaths, e, "Deaths", ttl),
+    withRest(code, fightIds, b.reportData.report.ints, e, "Interrupts", ttl),
   ]);
   const deathsAndKicks = [...deathEvents, ...kickEvents];
   const rep = b.reportData.report;
@@ -530,7 +605,7 @@ export async function fetchMultiPull(code: string, fightIds: number[]): Promise<
     Object.fromEntries((ENCOUNTERS[encounterId]?.avoidable ?? []).map((id) => [id, "configured" as const]));
   const avoidIds = [...new Set(fights.flatMap((f) => ENCOUNTERS[f.encounterId]?.avoidable ?? []))];
   const hits = avoidIds.length
-    ? await fetchEventsPerFight(code, fights, "DamageTaken", `ability.id in (${avoidIds.join(",")})`)
+    ? await fetchEventsPerFight(code, fights, "DamageTaken", `ability.id in (${avoidIds.join(",")})`, ttl)
     : [];
 
   const details: FightDetail[] = fights.map((fight) => {

@@ -76,11 +76,6 @@ export function Stat({ label, value, sub }: { label: string; value: React.ReactN
   );
 }
 
-export function Score({ value }: { value: number }) {
-  const c = value >= 90 ? "text-good" : value >= 65 ? "text-warn" : "text-bad";
-  return <span className={`font-semibold tabular-nums ${c}`}>{Math.round(value)}</span>;
-}
-
 export function Breadcrumbs({ items }: { items: { href?: string; label: string }[] }) {
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2 text-sm text-muted">
@@ -88,7 +83,7 @@ export function Breadcrumbs({ items }: { items: { href?: string; label: string }
         <span key={i} className="flex items-center gap-2">
           {i > 0 && <span>/</span>}
           {it.href ? (
-            <Link href={it.href} className="hover:text-fg">
+            <Link prefetch={false} href={it.href} className="hover:text-fg">
               {it.label}
             </Link>
           ) : (
@@ -150,7 +145,7 @@ export function ErrorBox({ message }: { message: string }) {
       <h2 className="mb-2 font-semibold text-bad">Couldn&apos;t load data</h2>
       <p className="text-sm">{message}</p>
       <p className="mt-3 text-sm text-muted">
-        <Link className="text-info underline" href="/">
+        <Link prefetch={false} className="text-info underline" href="/">
           Back to the guild page
         </Link>
       </p>

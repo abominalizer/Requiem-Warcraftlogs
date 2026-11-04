@@ -8,6 +8,12 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  // Persistent cache for Warcraft Logs responses. No id: Cloudflare creates the namespace on the first deploy.
+  "kv_namespaces": [
+    {
+      "binding": "WCL_CACHE"
+    }
+  ],
   "observability": {
     "enabled": true
   }
