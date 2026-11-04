@@ -47,6 +47,8 @@ export interface DefensiveCheck {
   readyUnused: string[];
   /** pressed nothing (no defensive in the last seconds, no external received) while something was ready */
   pressedNothing: boolean;
+  /** killed by a spell marked "can't be survived": defensives wouldn't have helped */
+  unsurvivable: boolean;
 }
 
 export interface PlayerStats {
@@ -99,7 +101,7 @@ function phaseSegments(d: FightDetail) {
  * was it pressed just before, on cooldown from earlier in this pull, or ready and not pressed?
  * Cooldowns only count within the pull (long cooldowns reset when a pull starts).
  */
-function checkDefensives(d: FightDetail, player: Player, at: number): DefensiveCheck | null {
+function checkDefensives(d: FightDetail, player: Player, at: number, killingAbilityId: number | null): DefensiveCheck | null {
   const def = d.defensives;
   if (!def) return null;
   const known = new Set(def.known[player.id] ?? []);
@@ -136,8 +138,9 @@ function checkDefensives(d: FightDetail, player: Player, at: number): DefensiveC
   const order: Record<DefensiveStatus, number> = { ready: 0, used: 1, cooldown: 2, unknown: 3 };
   spells.sort((a, b) => order[a.status] - order[b.status]);
   const readyUnused = spells.filter((s) => s.status === "ready").map((s) => s.key);
-  const pressedNothing = readyUnused.length > 0 && !spells.some((s) => s.status === "used") && externals.length === 0;
-  return { spells, externals, readyUnused, pressedNothing };
+  const unsurvivable = killingAbilityId != null && (d.unsurvivableIds ?? []).includes(killingAbilityId);
+  const pressedNothing = !unsurvivable && readyUnused.length > 0 && !spells.some((s) => s.status === "used") && externals.length === 0;
+  return { spells, externals, readyUnused, pressedNothing, unsurvivable };
 }
 
 export function analyzeFight(d: FightDetail): FightAnalysis {
@@ -209,7 +212,7 @@ export function analyzeFight(d: FightDetail): FightAnalysis {
         first: i === 0,
         phase: phaseAt(t)?.name ?? null,
         phaseId: phaseAt(t)?.id ?? null,
-        defensives: checkDefensives(d, player, x.t),
+        defensives: checkDefensives(d, player, x.t, killing),
         lastHits: hitsBefore.slice(-4).map((e) => ({ t: e.t - fight.startTime, ability: ab(d, e.abilityId), amount: e.amount })),
       },
     ];

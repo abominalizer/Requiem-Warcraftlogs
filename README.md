@@ -13,7 +13,7 @@ It only works with Requiem's logs. Reports from other guilds are rejected.
 
 ## Raid
 
-Every boss of the current raid with the enemy spells that hit us, taken from our best pull of each boss. Officers tick the spells nobody should get hit by (frontals, pools, swirls) and save them with the officer password. Those spells then count as avoidable damage everywhere on the site.
+Every boss of the current raid with the enemy spells that hit us, taken from our best pull of each boss. Officers tick the spells nobody should get hit by (frontals, pools, swirls), and the ones no defensive can survive (executes, one-shots), then save with the officer password. Avoidable spells count as avoidable damage everywhere on the site; deaths to can't-be-survived spells aren't counted as "died pressing nothing". A ticked spell covers every spell ID with that name.
 
 ## Raid night
 

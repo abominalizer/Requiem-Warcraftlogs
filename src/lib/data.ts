@@ -1,5 +1,5 @@
 import "server-only";
-import { getAvoidableMap } from "./avoidable";
+import { getAvoidableMap, getUnsurvivableMap } from "./avoidable";
 import { demoFight, demoReport } from "./demo";
 import { fetchFightDetail, fetchMultiPull, fetchNightDefensives, fetchReport, type NightDefensives } from "./wcl";
 import type { DamageTakenSummary, FightDetail, MultiPull, ReportSummary } from "./types";
@@ -20,19 +20,36 @@ async function nightDefensives(code: string): Promise<NightDefensives | null> {
   }
 }
 
-function withDefensives(detail: FightDetail, night: NightDefensives | null): FightDetail {
+/**
+ * A spell often has several IDs (Gravebound has three). Lists are saved with the IDs seen on the Raid page,
+ * so expand them to every spell in this report with the same name.
+ */
+function expandByName(ids: number[] | undefined, abilities: FightDetail["abilities"]): number[] {
+  if (!ids?.length) return [];
+  const names = new Set(ids.map((id) => abilities[id]?.name).filter(Boolean));
+  const out = new Set(ids);
+  for (const a of Object.values(abilities)) if (names.has(a.name)) out.add(a.id);
+  return [...out];
+}
+
+function withDefensives(detail: FightDetail, night: NightDefensives | null, unsurvivable: Record<number, number[]>): FightDetail {
   if (!night) return detail;
-  return { ...detail, defensives: { casts: night.byFight[detail.fight.id] ?? [], known: night.known, spells: night.spells } };
+  return {
+    ...detail,
+    unsurvivableIds: expandByName(unsurvivable[detail.fight.encounterId], detail.abilities),
+    defensives: { casts: night.byFight[detail.fight.id] ?? [], known: night.known, spells: night.spells },
+  };
 }
 
 export async function getFight(code: string, fightId: number): Promise<FightDetail> {
-  const [detail, avoidable, night] = await Promise.all([
+  const [detail, avoidable, night, unsurvivable] = await Promise.all([
     isDemo(code) ? demoFight(fightId) : fetchFightDetail(code, fightId),
     getAvoidableMap(),
     nightDefensives(code),
+    getUnsurvivableMap(),
   ]);
-  const ids = avoidable[detail.fight.encounterId];
-  return withDefensives(ids?.length ? { ...detail, avoidableIds: ids } : detail, night);
+  const ids = expandByName(avoidable[detail.fight.encounterId], detail.abilities);
+  return withDefensives(ids.length ? { ...detail, avoidableIds: ids } : detail, night, unsurvivable);
 }
 
 export const MAX_PULLS = 40;
@@ -40,11 +57,12 @@ export const MAX_PULLS = 40;
 /** Load several pulls in a handful of batched requests (Cloudflare allows 50 per page view). */
 export async function getMultiPull(code: string, ids: number[], opts: { damageTaken?: boolean } = {}): Promise<MultiPull> {
   if (!isDemo(code)) {
-    const [multi, night] = await Promise.all([
+    const [multi, night, unsurvivable] = await Promise.all([
       getAvoidableMap().then((avoidable) => fetchMultiPull(code, ids.slice(0, MAX_PULLS), { ...opts, avoidable })),
       nightDefensives(code),
+      getUnsurvivableMap(),
     ]);
-    return { ...multi, details: multi.details.map((d) => withDefensives(d, night)) };
+    return { ...multi, details: multi.details.map((d) => withDefensives(d, night, unsurvivable)) };
   }
   const details = ids.map(demoFight);
   const abilities = new Map<number, DamageTakenSummary["abilities"][number]>();

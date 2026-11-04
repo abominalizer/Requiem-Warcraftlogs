@@ -93,6 +93,8 @@ export interface FightDetail {
   knownAvoidable?: Record<number, "configured" | "heuristic">;
   /** Avoidable spell ids for this boss (marked on the Raid page). When set, nothing is guessed. */
   avoidableIds?: number[];
+  /** Spells whose deaths no defensive could prevent (marked on the Raid page). */
+  unsurvivableIds?: number[];
   /** Defensive casts in this pull + which defensives each player used tonight. */
   defensives?: PullDefensives;
 }

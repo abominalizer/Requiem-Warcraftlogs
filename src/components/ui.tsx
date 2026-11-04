@@ -159,10 +159,19 @@ export function DefensiveChips({ check }: { check: import("@/lib/analysis").Defe
   const unknown = check.spells.filter((s) => s.status === "unknown");
   return (
     <div className="flex flex-wrap gap-1 text-[11px] leading-tight">
+      {check.unsurvivable && (
+        <span className="rounded bg-info/15 px-1.5 py-0.5 font-semibold text-info" title="Killed by a spell marked as unsurvivable on the Raid page">
+          can&apos;t be survived
+        </span>
+      )}
       {check.spells
         .filter((s) => s.status !== "unknown")
         .map((s) =>
-          s.status === "ready" ? (
+          s.status === "ready" && check.unsurvivable ? (
+            <span key={s.key} className="rounded bg-panel-2 px-1.5 py-0.5 text-muted" title="Ready, but this death couldn't be prevented">
+              ready: {s.key}
+            </span>
+          ) : s.status === "ready" ? (
             <span key={s.key} className="rounded bg-bad/20 px-1.5 py-0.5 font-semibold text-bad" title="Used earlier tonight, off cooldown, not pressed">
               READY: {s.key}
             </span>

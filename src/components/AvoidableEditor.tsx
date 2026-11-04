@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { saveAvoidableAction } from "@/app/raid/actions";
+import { saveBossSpellsAction } from "@/app/raid/actions";
 import { abilityIconUrl, fmtNum, progressColor } from "@/lib/format";
 import type { RaidBoss } from "@/lib/types";
 
@@ -11,12 +11,14 @@ const PW_KEY = "requiem-officer-password";
 export function AvoidableEditor({
   bosses,
   saved,
+  savedUnsurvivable,
   fromCode,
   canEdit,
   difficultyNames,
 }: {
   bosses: RaidBoss[];
   saved: Record<string, number[]>;
+  savedUnsurvivable: Record<string, number[]>;
   fromCode: Record<string, number[]>;
   canEdit: boolean;
   difficultyNames: Record<string, string>;
@@ -62,6 +64,7 @@ export function AvoidableEditor({
           key={b.encounterId}
           boss={b}
           initial={saved[b.encounterId] ?? []}
+          initialUnsurvivable={savedUnsurvivable[b.encounterId] ?? []}
           locked={fromCode[b.encounterId] ?? []}
           canEdit={canEdit}
           password={password}
@@ -75,6 +78,7 @@ export function AvoidableEditor({
 function BossEditor({
   boss,
   initial,
+  initialUnsurvivable,
   locked,
   canEdit,
   password,
@@ -82,6 +86,7 @@ function BossEditor({
 }: {
   boss: RaidBoss;
   initial: number[];
+  initialUnsurvivable: number[];
   locked: number[];
   canEdit: boolean;
   password: string;
@@ -89,32 +94,42 @@ function BossEditor({
 }) {
   const [savedIds, setSavedIds] = useState<Set<number>>(new Set(initial));
   const [ids, setIds] = useState<Set<number>>(new Set(initial));
+  const [savedUns, setSavedUns] = useState<Set<number>>(new Set(initialUnsurvivable));
+  const [uns, setUns] = useState<Set<number>>(new Set(initialUnsurvivable));
   const [status, setStatus] = useState<{ kind: "ok" | "error" | "busy"; text: string } | null>(null);
   const lockedSet = new Set(locked);
 
   const isOn = (spellIds: number[]) => spellIds.some((id) => ids.has(id) || lockedSet.has(id));
-  const toggle = (spellIds: number[], on: boolean) =>
-    setIds((prev) => {
-      const next = new Set(prev);
-      for (const id of spellIds) {
-        if (on) next.add(id);
-        else next.delete(id);
-      }
-      return next;
-    });
+  const isUns = (spellIds: number[]) => spellIds.some((id) => uns.has(id));
+  const setter =
+    (set: typeof setIds) =>
+    (spellIds: number[], on: boolean) =>
+      set((prev) => {
+        const next = new Set(prev);
+        for (const id of spellIds) {
+          if (on) next.add(id);
+          else next.delete(id);
+        }
+        return next;
+      });
+  const toggle = setter(setIds);
+  const toggleUns = setter(setUns);
 
   // spells saved earlier that didn't show up in the reference pull
   const shownIds = new Set(boss.spells.flatMap((s) => s.ids));
-  const missing = [...ids].filter((id) => !shownIds.has(id));
+  const missing = [...new Set([...ids, ...uns])].filter((id) => !shownIds.has(id));
 
-  const dirty = ids.size !== savedIds.size || [...ids].some((id) => !savedIds.has(id));
-  const count = boss.spells.filter((s) => isOn(s.ids)).length + missing.length;
+  const differs = (a: Set<number>, b: Set<number>) => a.size !== b.size || [...a].some((id) => !b.has(id));
+  const dirty = differs(ids, savedIds) || differs(uns, savedUns);
+  const count = boss.spells.filter((s) => isOn(s.ids)).length + missing.filter((id) => ids.has(id)).length;
+  const unsCount = boss.spells.filter((s) => isUns(s.ids)).length + missing.filter((id) => uns.has(id)).length;
 
   const save = async () => {
     setStatus({ kind: "busy", text: "Saving…" });
-    const res = await saveAvoidableAction(boss.encounterId, [...ids], password);
+    const res = await saveBossSpellsAction(boss.encounterId, [...ids], [...uns], password);
     if (res.ok) {
       setSavedIds(new Set(ids));
+      setSavedUns(new Set(uns));
       setStatus({ kind: "ok", text: "Saved" });
     } else setStatus({ kind: "error", text: res.error });
   };
@@ -128,7 +143,9 @@ function BossEditor({
           {difficultyName && <span className="text-sm text-muted">{difficultyName}</span>}
         </span>
         <span className={`text-sm ${count ? "text-accent" : "text-muted"}`}>
-          {count ? `${count} avoidable spell${count > 1 ? "s" : ""}` : "nothing marked yet"}
+          {count || unsCount
+            ? [count && `${count} avoidable`, unsCount && `${unsCount} can't be survived`].filter(Boolean).join(" · ")
+            : "nothing marked yet"}
           {dirty && <span className="ml-2 text-warn">· unsaved changes</span>}
         </span>
       </summary>
@@ -148,13 +165,16 @@ function BossEditor({
                 {boss.source.kill ? "kill" : `${boss.source.percent.toFixed(1)}%`}
               </span>
               , {new Date(boss.source.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}). Damage and hits are from that pull, to help
-              tell spells apart. Tick what players should never get hit by.
+              tell spells apart. Tick what players should never get hit by, and spells whose deaths no defensive could prevent.
             </p>
             <div className="overflow-x-auto">
               <table className="data">
                 <thead>
                   <tr>
                     <th className="w-10">Avoidable</th>
+                    <th className="w-10" title="Executes and one-shots: deaths to these don't count as 'died pressing nothing'">
+                      Can&apos;t be survived
+                    </th>
                     <th>Spell</th>
                     <th className="num">Damage</th>
                     <th className="num">Hits</th>
@@ -166,7 +186,7 @@ function BossEditor({
                     const fixed = s.ids.some((id) => lockedSet.has(id));
                     const icon = abilityIconUrl(s.icon);
                     return (
-                      <tr key={s.name} className={on ? "bg-accent/10" : ""}>
+                      <tr key={s.name} className={on ? "bg-accent/10" : isUns(s.ids) ? "bg-info/10" : ""}>
                         <td>
                           <input
                             type="checkbox"
@@ -175,6 +195,15 @@ function BossEditor({
                             onChange={(e) => toggle(s.ids, e.target.checked)}
                             title={fixed ? "Set in the code (src/config/encounters.ts)" : undefined}
                             className="h-4 w-4 accent-[var(--color-accent)]"
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={isUns(s.ids)}
+                            disabled={!canEdit}
+                            onChange={(e) => toggleUns(s.ids, e.target.checked)}
+                            className="h-4 w-4 accent-[var(--color-info)]"
                           />
                         </td>
                         <td>
@@ -199,10 +228,19 @@ function BossEditor({
                       <td>
                         <input
                           type="checkbox"
-                          checked
+                          checked={ids.has(id)}
                           disabled={!canEdit}
-                          onChange={() => toggle([id], false)}
+                          onChange={(e) => toggle([id], e.target.checked)}
                           className="h-4 w-4 accent-[var(--color-accent)]"
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={uns.has(id)}
+                          disabled={!canEdit}
+                          onChange={(e) => toggleUns([id], e.target.checked)}
+                          className="h-4 w-4 accent-[var(--color-info)]"
                         />
                       </td>
                       <td className="text-muted" colSpan={3}>
@@ -226,7 +264,13 @@ function BossEditor({
               Save {boss.name}
             </button>
             {dirty && (
-              <button className="text-sm text-muted hover:text-fg" onClick={() => setIds(new Set(savedIds))}>
+              <button
+                className="text-sm text-muted hover:text-fg"
+                onClick={() => {
+                  setIds(new Set(savedIds));
+                  setUns(new Set(savedUns));
+                }}
+              >
                 Undo changes
               </button>
             )}

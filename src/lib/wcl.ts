@@ -590,9 +590,14 @@ export async function fetchMultiPull(
     : { abilities: [], byPlayer: [] };
 
   // Avoidable = what you configured per boss in src/config/encounters.ts. Fetch only those hits.
+  // a spell often has several IDs: a marked spell covers every spell in this report with the same name
+  const sameName = (ids: number[]) => {
+    const names = new Set(ids.map((id) => abilities[id]?.name).filter(Boolean));
+    return [...new Set([...ids, ...Object.values(abilities).filter((a) => names.has(a.name)).map((a) => a.id)])];
+  };
   const avoidableFor = (encounterId: number): Record<number, "configured"> =>
-    Object.fromEntries((opts.avoidable?.[encounterId] ?? []).map((id) => [id, "configured" as const]));
-  const avoidIds = [...new Set(fights.flatMap((f) => opts.avoidable?.[f.encounterId] ?? []))];
+    Object.fromEntries(sameName(opts.avoidable?.[encounterId] ?? []).map((id) => [id, "configured" as const]));
+  const avoidIds = [...new Set(fights.flatMap((f) => sameName(opts.avoidable?.[f.encounterId] ?? [])))];
   const hits = avoidIds.length
     ? await fetchEventsPerFight(code, fights, "DamageTaken", `ability.id in (${avoidIds.join(",")})`, ttl)
     : [];
