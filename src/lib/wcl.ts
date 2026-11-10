@@ -96,7 +96,7 @@ async function gql<T>(
   ttl: number | ((data: T) => number) = 10 * MINUTE,
 ): Promise<T> {
   const raw = query + JSON.stringify(variables);
-  const hit = memory.get(raw);
+  const hit = process.env.WCL_NO_MEMCACHE ? undefined : memory.get(raw);
   if (hit && Date.now() - hit.at < hit.ttl) return hit.value as Promise<T>;
 
   const p = (async () => {

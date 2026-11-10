@@ -98,6 +98,25 @@ function phaseSegments(d: FightDetail) {
 }
 
 /**
+ * Spell name -> icon, built once per pull (searching the report's whole spell list for every
+ * death was by far the most expensive thing the site did). Consumable labels map to their first matching spell.
+ */
+const iconIndexes = new WeakMap<FightDetail["abilities"], Map<string, string>>();
+function iconIndex(d: FightDetail): Map<string, string> {
+  // keyed by the spell list itself: all pulls of a night share one, so it's built once per page
+  let m = iconIndexes.get(d.abilities);
+  if (m) return m;
+  m = new Map();
+  for (const a of Object.values(d.abilities)) {
+    if (!a.icon) continue;
+    if (!m.has(a.name)) m.set(a.name, a.icon);
+    for (const c of CONSUMABLES) if (!m.has(c.label) && c.match.test(a.name)) m.set(c.label, a.icon);
+  }
+  iconIndexes.set(d.abilities, m);
+  return m;
+}
+
+/**
  * At the moment `player` died (report time `at`): for each defensive / consumable they used at least once tonight,
  * was it pressed just before, on cooldown from earlier in this pull, or ready and not pressed?
  * Cooldowns only count within the pull (long cooldowns reset when a pull starts).
@@ -106,13 +125,7 @@ function checkDefensives(d: FightDetail, player: Player, at: number, killingAbil
   const def = d.defensives;
   if (!def) return null;
   const known = new Set(def.known[player.id] ?? []);
-  // icon per spell name (for consumable labels, the first spell matching it)
-  const iconOf = (key: string) => {
-    const exact = Object.values(d.abilities).find((a) => a.name === key && a.icon);
-    if (exact) return exact.icon;
-    const cons = CONSUMABLES.find((c) => c.label === key);
-    return cons ? Object.values(d.abilities).find((a) => cons.match.test(a.name) && a.icon)?.icon : undefined;
-  };
+  const iconOf = (key: string) => iconIndex(d).get(key);
   const classSpells = (CLASS_DEFENSIVES[player.className] ?? []).map((s) => s.name);
   const keys = [
     ...new Set([...classSpells.filter((k) => def.spells[k]), ...[...known].filter((k) => def.spells[k]?.kind === "consumable")]),

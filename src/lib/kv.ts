@@ -37,6 +37,7 @@ export async function kvGet<T>(key: string): Promise<T | null> {
 export function kvPut(key: string, value: unknown, ttlMs?: number) {
   const { kv, waitUntil } = cloudflare();
   const body = JSON.stringify(value);
+  if (process.env.KV_DEBUG) console.log("[kv] put", key.slice(0, 50), (body.length / 1024).toFixed(0) + "KB");
   if (!kv) {
     local.set(key, body);
     return;
